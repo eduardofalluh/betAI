@@ -155,12 +155,37 @@ body {
   height: 80vh;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  overflow-y: auto;
+  justify-content: flex-start; /* Change from flex-end */
+  overflow-y: auto; /* Enable scrolling */
+  overflow-x: hidden; /* Prevent horizontal scrolling */
   padding: 20px;
   border-radius: 10px;
   background-color: black;
   border: 2px solid #33ff33;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: green black; /* Firefox */
+  max-height: 60vh; /* Set a max height to enforce scrolling */
+}
+
+/* Ensure the last message is always visible */
+.terminal-container div:last-child {
+  margin-bottom: 10px;
+}
+
+
+
+/* Custom Scrollbar for Chrome */
+.terminal-container::-webkit-scrollbar {
+  width: 10px;
+}
+
+.terminal-container::-webkit-scrollbar-thumb {
+  background: green;
+  border-radius: 5px;
+}
+
+.terminal-container::-webkit-scrollbar-track {
+  background: black;
 }
 
 /* Terminal Message Formatting */

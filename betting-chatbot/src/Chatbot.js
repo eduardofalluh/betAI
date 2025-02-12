@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import "./App.css";
 
@@ -6,6 +6,7 @@ const Chatbot = () => {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const chatEndRef = useRef(null); // Ref to scroll to bottom
 
   const sendMessage = async () => {
     if (input.trim() === "") return;
@@ -24,9 +25,14 @@ const Chatbot = () => {
     setInput("");
   };
 
+  // Scroll to the bottom of the chat container when messages update
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
   return (
     <div className="App">
-      {/* Show burger menu only when sidebar is closed */}
+      {/* Burger Menu for Sidebar */}
       {!sidebarOpen && (
         <button className="burger-menu" onClick={() => setSidebarOpen(true)}>
           ☰
@@ -60,6 +66,7 @@ const Chatbot = () => {
               {msg.text}
             </div>
           ))}
+          <div ref={chatEndRef} /> {/* Invisible div to keep chat at the bottom */}
         </div>
         <div className="input-container">
           <input
