@@ -4,11 +4,17 @@ import { motion } from "framer-motion";
 import "./App.css";
 
 const Chatbot = () => {
-  const [chats, setChats] = useState([]); // Stores chat summaries
+  const [chats, setChats] = useState([]); // Stores saved chat summaries
   const [currentMessages, setCurrentMessages] = useState([]); // Stores messages for current chat
   const [input, setInput] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const chatEndRef = useRef(null);
+
+  // Load chat history from local storage
+  useEffect(() => {
+    const savedChats = JSON.parse(localStorage.getItem("chatHistory")) || [];
+    setChats(savedChats);
+  }, []);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -54,9 +60,16 @@ const Chatbot = () => {
   const startNewChat = () => {
     if (currentMessages.length > 0) {
       const chatTitle = generateChatTitle(currentMessages);
-      setChats([...chats, chatTitle]);
+      const newChats = [...chats, { title: chatTitle, messages: currentMessages }];
+      setChats(newChats);
+      localStorage.setItem("chatHistory", JSON.stringify(newChats)); // Save to local storage
     }
     setCurrentMessages([]);
+  };
+
+  const loadChat = (chatIndex) => {
+    setCurrentMessages(chats[chatIndex].messages);
+    setSidebarOpen(false);
   };
 
   return (
@@ -78,15 +91,15 @@ const Chatbot = () => {
         transition={{ duration: 0.3 }}
       >
         <button className="close-menu" onClick={() => setSidebarOpen(false)}>✖</button>
-        <h2>🕵️‍♂️ Chat History</h2>
+        <h2>Chat History</h2>
         <button className="new-chat-btn" onClick={startNewChat}>➕ Start New Chat</button>
         <div className="chat-history">
           {chats.length === 0 ? (
             <p>No chat history yet.</p>
           ) : (
-            chats.map((title, index) => (
-              <div key={index} className="chat-item">
-                ➜ {title}
+            chats.map((chat, index) => (
+              <div key={index} className="chat-item" onClick={() => loadChat(index)}>
+                ➜ {chat.title}
               </div>
             ))
           )}
