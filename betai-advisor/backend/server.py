@@ -18,8 +18,20 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# LLM: set OPENAI_API_KEY in .env for real AI replies
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+# LLM: load key from env or from encrypted storage (never logged or exposed)
+def _load_openai_key() -> str:
+    key = os.getenv("OPENAI_API_KEY", "").strip()
+    if key:
+        return key
+    passphrase = os.getenv("BETAI_PASSPHRASE", "").strip()
+    if passphrase:
+        from secrets_helper import load_and_decrypt
+        key = load_and_decrypt(passphrase)
+        if key:
+            return key
+    return ""
+
+OPENAI_API_KEY = _load_openai_key()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 # Paths
