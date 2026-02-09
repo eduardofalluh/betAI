@@ -372,10 +372,10 @@ def handle_chat_message(message: str, sport: str) -> str:
 
 @app.route("/")
 def index():
-    """Backend API root — use the frontend app at http://localhost:3000 or 3001"""
+    """Backend API root — frontend is on Netlify"""
     return (
         "<p>BetAI Advisor <b>API</b> is running.</p>"
-        "<p>Open the app at <a href='http://localhost:3001'>http://localhost:3001</a> (or :3000).</p>"
+        "<p>Use the app at <a href='https://betai.netlify.app'>https://betai.netlify.app</a> — it talks to this API.</p>"
     ), 200
 
 
