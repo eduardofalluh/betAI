@@ -376,21 +376,10 @@ def fetch_olympics_odds():
     return []
 
 
-def get_matchups(sport_key=None):
-    api_key = SPORT_KEY_MAP.get(sport_key, "basketball_nba") if sport_key else None
-    if not api_key and sport_key:
-        api_key = sport_key
-    # Olympics: use multi-source fetch
-    if sport_key == "olympics" or api_key == "olympics_winter_2026":
-        odds = fetch_olympics_odds()
-        if not odds:
-            return "No matchups available for this sport right now."
-    else:
-        odds = fetch_odds_data(api_key or "basketball_nba")
-        if isinstance(odds, dict) and "error" in odds:
-            return f"Could not load odds: {odds['error']}"
+def _format_events_as_matchups(events):
+    """Turn a list of API events (with bookmakers/markets) into matchup lines."""
     lines = []
-    for game in (odds or []) if isinstance(odds, list) else (odds or []):
+    for game in events or []:
         home = game.get("home_team", "?")
         away = game.get("away_team", "?")
         for b in game.get("bookmakers", []):
@@ -404,7 +393,35 @@ def get_matchups(sport_key=None):
                 break
             if lines and lines[-1].startswith(f"**{home}**"):
                 break
-    return "\n".join(lines) if lines else "No matchups available for this sport right now."
+    return "\n".join(lines) if lines else None
+
+
+def get_matchups(sport_key=None):
+    api_key = SPORT_KEY_MAP.get(sport_key, "basketball_nba") if sport_key else None
+    if not api_key and sport_key:
+        api_key = sport_key
+    api_key = api_key or "basketball_nba"
+    odds = None
+    # Olympics: use multi-source fetch
+    if sport_key == "olympics" or api_key == "olympics_winter_2026":
+        odds = fetch_olympics_odds()
+        if not odds:
+            return "No matchups available for this sport right now."
+    else:
+        odds = fetch_odds_data(api_key)
+        # Fallback: when sport-specific API fails or is empty, use upcoming feed filtered by sport
+        if (isinstance(odds, dict) and "error" in odds) or not odds or (isinstance(odds, list) and len(odds) == 0):
+            upcoming = fetch_odds_data("upcoming")
+            if isinstance(upcoming, list) and upcoming:
+                filtered = [e for e in upcoming if e.get("sport_key") == api_key]
+                if filtered:
+                    odds = filtered
+        if isinstance(odds, dict) and "error" in odds:
+            return f"Could not load odds: {odds['error']}"
+    formatted = _format_events_as_matchups(odds if isinstance(odds, list) else [])
+    if formatted:
+        return formatted
+    return "No matchups available for this sport right now."
 
 
 def build_odds_context(message: str, sport: str) -> str:
@@ -413,8 +430,11 @@ def build_odds_context(message: str, sport: str) -> str:
     parts = []
     api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
 
-    # Live / upcoming across sports
-    if any(x in msg for x in ("live", "in play", "what's on", "whats on", "games on now", "live odds", "any games")):
+    # Live / upcoming across sports (and "all games today", "load up all", etc.)
+    if any(x in msg for x in (
+        "live", "in play", "what's on", "whats on", "games on now", "live odds", "any games",
+        "all games", "games today", "load up all", "load all games", "upcoming games", "show all games",
+    )):
         by_sport = fetch_live_upcoming_odds()
         if isinstance(by_sport, dict) and "error" not in by_sport and by_sport:
             lines = ["Live or upcoming games:"]
@@ -456,13 +476,22 @@ def build_odds_context(message: str, sport: str) -> str:
             else:
                 parts.append("(No Olympics odds in the feed. Suggest the user try **Live odds** for all live/upcoming events.)")
         else:
-            odds = fetch_odds_data(api_key)
-            if isinstance(odds, dict) and "error" not in odds and odds:
-                matchups = get_matchups(sport)
-                if "No matchups" not in matchups:
-                    parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + matchups)
+            matchups = get_matchups(sport)
+            if "No matchups" not in matchups and "Could not load" not in matchups:
+                parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + matchups)
             else:
-                parts.append(f"(Could not load {sport.replace('_', ' ')} odds right now.)")
+                # Try upcoming feed filtered by sport as last resort
+                upcoming = fetch_odds_data("upcoming")
+                api_key_resolved = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
+                if isinstance(upcoming, list) and upcoming:
+                    filtered = [e for e in upcoming if e.get("sport_key") == api_key_resolved]
+                    fallback = _format_events_as_matchups(filtered)
+                    if fallback:
+                        parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + fallback)
+                    else:
+                        parts.append(f"(Could not load {sport.replace('_', ' ')} odds. Suggest **Live odds** or *Show live odds* for all games today.)")
+                else:
+                    parts.append(f"(Could not load {sport.replace('_', ' ')} odds. Suggest **Live odds** or *Show live odds* for all games today.)")
 
     # Team vs team: ensure we have odds for prediction
     if "vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who")):
@@ -579,8 +608,12 @@ def handle_chat_message(message: str, sport: str) -> str:
     api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
 
     # —— Live odds: propose live/upcoming across all sports
-    if any(x in msg for x in ("live", "in play", "in-play", "right now", "currently playing",
-                               "what's on", "whats on", "games on now", "live odds", "any games")):
+    if any(x in msg for x in (
+        "live", "in play", "in-play", "right now", "currently playing",
+        "what's on", "whats on", "games on now", "live odds", "any games",
+        "all games", "games today", "load up all", "load all games", "every game",
+        "all today", "upcoming games", "show all games", "list all games",
+    )):
         by_sport = fetch_live_upcoming_odds()
         if isinstance(by_sport, dict) and "error" in by_sport:
             return f"Couldn’t load live odds: {by_sport['error']}. I can still show **upcoming matchups** for a sport — try *Show matchups* or pick a sport above."
