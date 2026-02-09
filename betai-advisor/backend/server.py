@@ -383,9 +383,10 @@ def get_matchups(sport_key=None):
 
 
 def build_odds_context(message: str, sport: str) -> str:
-    """Fetch relevant odds/live data based on user message and current sport. Returns a string for LLM context."""
+    """Fetch relevant odds/live data. Always include current-sport matchups so the specialist can answer."""
     msg = message.lower().strip()
     parts = []
+    api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
 
     # Live / upcoming across sports
     if any(x in msg for x in ("live", "in play", "what's on", "whats on", "games on now", "live odds", "any games")):
@@ -407,35 +408,38 @@ def build_odds_context(message: str, sport: str) -> str:
         else:
             parts.append("(Milano Cortina 2026 odds are not in the feed yet.)")
 
-    # Sport-specific matchups
-    if any(x in msg for x in ("matchups", "match ups", "show games", "upcoming", "odds", "compare")) or not parts:
-        api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
-        odds = fetch_odds_data(api_key)
-        if isinstance(odds, dict) and "error" not in odds and odds:
-            parts.append(f"Upcoming {sport.replace('_', ' ')} matchups:\n" + get_matchups(sport))
-
-    # Team vs team: try to get prediction data
-    if "vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who")):
-        api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
-        odds = fetch_odds_data(api_key)
-        if isinstance(odds, dict) and "error" not in odds:
-            parts.append("(Use the odds data above to say who is the favorite and at what odds.)")
-
-    # In-depth analysis: multiple books, implied probability, best odds, spreads, value
+    # In-depth analysis: multiple books, implied probability, best odds, spreads
+    added_analysis = False
     analysis_triggers = (
         "analyze", "analysis", "breakdown", "value", "best bet", "possible bets",
         "in-depth", "indepth", "statistics", "stats", "recommend", "pick", "picks",
     )
     if any(t in msg for t in analysis_triggers) or ("vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who", "analyze"))):
         analysis_block = build_analysis_context(message, sport)
-        if analysis_block and not analysis_block.startswith("(Could not"):
+        if analysis_block and not analysis_block.startswith("(Could not") and "(No upcoming" not in analysis_block:
             parts.append(analysis_block)
+            added_analysis = True
         elif analysis_block.startswith("(Could not"):
             parts.append(analysis_block)
 
+    # Always include current-sport matchups so the specialist can answer "who's winning", "tonight", etc.
+    if not added_analysis:
+        odds = fetch_odds_data(api_key)
+        if isinstance(odds, dict) and "error" not in odds and odds:
+            matchups = get_matchups(sport)
+            if "No matchups" not in matchups:
+                parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + matchups)
+        else:
+            parts.append(f"(Could not load {sport.replace('_', ' ')} odds right now.)")
+
+    # Team vs team: ensure we have odds for prediction
+    if "vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who")):
+        if not any("Use the odds" in p or "favorite" in p for p in parts):
+            parts.append("(Use the odds data above to name the favorite and the odds for each side.)")
+
     if not parts:
         return ""
-    return "Current odds data (use this when answering):\n" + "\n\n".join(parts)
+    return "Current odds data (you MUST use this when answering):\n" + "\n\n".join(parts)
 
 
 def _is_model_access_error(err: str) -> bool:
@@ -663,24 +667,15 @@ def post_chat():
     return jsonify({"ok": True, "chats": chats})
 
 
-SYSTEM_PROMPT = """You are BetAI, a friendly and knowledgeable betting advisor. You help users with sports betting: live odds, matchups, predictions, in-depth analysis, and responsible gambling tips.
+SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a dedicated mini-agent for this sport only: you answer using the odds and matchups for {sport_label} provided below. Do not ask the user to "share data", "use the Show matchups feature", or "provide matchups"—you already have data in the block below. Use it.
 
-Current sport context: {sport_label} (user can change sport in the app).
-
-Guidelines:
-- Use any "Current odds data" or "In-depth odds data" provided below when answering; cite real odds, bookmakers, and matchups when you have them.
-- Be concise but helpful. Use light markdown (e.g. **bold** for team names, odds, and key conclusions).
-- For live odds or matchups, summarize clearly. For "who will win" or "should I bet on", name the favorite and the odds.
-
-**In-depth analysis (when the user asks for analysis, value, best bet, possible bets, breakdown, or stats):**
-- Use the provided odds per bookmaker, implied probability (%), best odds by outcome, and spreads when available.
-- Explain in 2–4 short points: (1) who is the favorite and by how much, (2) where the best odds are for each side, (3) whether any line offers value (e.g. combined best-odds implied total below 100%), (4) spreads if relevant.
-- End with **Possible bets**: 1–3 concrete suggestions, e.g. "Team A ML @ 2.10 at [Book]" or "Team B -3.5 @ 1.91 at [Book]", with one-line reasoning. If no clear value, say so and still give a cautious pick.
-- You do not have access to live player or team statistics; base your analysis only on the odds data (implied probabilities, comparison across books, and spreads). If the user asks for "stats" or "statistics", clarify that your analysis is odds-based and suggest they combine it with their own research on form and injuries.
-
-- Mention Milano Cortina 2026 when relevant.
-- Gently remind users to bet responsibly when appropriate.
-- If you don't have specific data, suggest "Show live odds", "Show matchups", or "Analyze [Team A] vs [Team B]" for their sport."""
+**Rules:**
+1. **Always use the data below.** If "Current odds data" or "In-depth odds data" is provided with matchups/odds, you MUST answer from that data: name real games, favorites, and odds. Never say you "need" more data when data is provided.
+2. Only if the data block says "(Could not load" or "No matchups available" may you suggest they try "Show matchups" or another sport.
+3. Be concise and concrete. Use **bold** for team names and odds. For "who's winning tonight", "upcoming games", or "what do you think", list the actual matchups and favorites from the data with odds.
+4. For analysis/value/best bet requests: use implied %, best odds by book, and spreads when given; end with **Possible bets**: 1–3 concrete picks (e.g. "Lakers ML @ 2.10 at DraftKings") with one-line reasoning.
+5. You are the {sport_label} expert: frame answers in terms of this sport (e.g. NBA, Champions League, NFL) and its upcoming games. Do not give generic "I can help with…" replies when odds are provided—give a direct answer using the numbers.
+6. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
 
 
 @app.route("/chat", methods=["POST"])
