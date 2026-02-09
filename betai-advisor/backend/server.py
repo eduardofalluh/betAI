@@ -32,7 +32,7 @@ def _load_openai_key() -> str:
     return ""
 
 OPENAI_API_KEY = _load_openai_key()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent

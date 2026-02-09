@@ -24,6 +24,8 @@ The backend on Render **cannot** use your encrypted key file — it only reads *
    - Get OpenAI key: [platform.openai.com/api-keys](https://platform.openai.com/api-keys).
    - Get Odds API key (free tier): [the-odds-api.com](https://the-odds-api.com).
 
+   **Optional:** If your project has access to a different model (e.g. `gpt-4o-mini`), add **OPENAI_MODEL** = `gpt-4o-mini`. The app defaults to `gpt-3.5-turbo` so it works with more plans.
+
 4. **Redeploy**  
    After saving, Render will redeploy. Wait for the deploy to finish (1–2 min).
 
