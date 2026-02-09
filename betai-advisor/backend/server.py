@@ -439,10 +439,10 @@ def chat():
         return jsonify({"reply": "Send a message to get advice."}), 400
 
     # Use real LLM when OpenAI key is set
+    llm_error = None
     if OPENAI_API_KEY:
         sport_label = sport.replace("_", " ").title()
         context = build_odds_context(message, sport)
-        # Build conversation: history + new user message (assistant replies already in history)
         conversation = list(history)
         conversation.append({"sender": "user", "text": message})
         reply = call_openai(
@@ -452,15 +452,32 @@ def chat():
         )
         if reply and not reply.startswith("(LLM error:"):
             return jsonify({"reply": reply})
-        # On LLM error, fall back to rule-based reply
+        llm_error = reply if reply else "No response from LLM"
+    else:
+        llm_error = "not_configured"
 
     reply = handle_chat_message(message, sport)
+    if llm_error == "not_configured":
+        reply += "\n\n_To get **real AI replies**, add **OPENAI_API_KEY** in Render: Dashboard → your service (betAI) → Environment → Add variable OPENAI_API_KEY = your OpenAI key._"
+    elif llm_error:
+        err_preview = (llm_error[:80] + "…") if len(llm_error) > 80 else llm_error
+        reply += "\n\n_(LLM failed: " + err_preview + " — check OPENAI_API_KEY on Render.)_"
     return jsonify({"reply": reply})
 
 
 @app.route("/sports", methods=["GET"])
 def sports_list():
     return jsonify(list(SPORT_KEY_MAP.keys()))
+
+
+@app.route("/status", methods=["GET"])
+def status():
+    """Quick check: is the API and LLM configured? (does not expose keys)"""
+    return jsonify({
+        "ok": True,
+        "llm_configured": bool(OPENAI_API_KEY),
+        "odds_configured": bool(ODDS_API_KEY and ODDS_API_KEY != "YOUR_ODDS_API_KEY_HERE"),
+    })
 
 
 if __name__ == "__main__":
