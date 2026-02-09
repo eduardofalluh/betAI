@@ -26,6 +26,8 @@ The backend on Render **cannot** use your encrypted key file — it only reads *
 
    **Optional:** The app defaults to `gpt-5.2`. If your project uses different models (e.g. only GPT-4o or GPT-3.5), set **OPENAI_MODEL** on Render to a model you have access to (e.g. `gpt-4o`, `gpt-3.5-turbo`).
 
+   **Optional (recommended for production):** Set **JWT_SECRET** to a long random string so login tokens are secure. If unset, the app uses a default (fine for testing only).
+
 4. **Redeploy**  
    After saving, Render will redeploy. Wait for the deploy to finish (1–2 min).
 

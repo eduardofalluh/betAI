@@ -8,6 +8,7 @@ const QUICK_PROMPTS = [
   'Show live odds',
   'What\'s on now?',
   'Show current matchups',
+  'Analyze matchups — value & best bets',
   'Milano Cortina 2026 odds',
 ]
 
@@ -22,6 +23,9 @@ export default function ChatPanel({
   lastSavedAt,
   theme,
   onToggleTheme,
+  user,
+  onOpenAuth,
+  onLogout,
 }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -105,6 +109,18 @@ export default function ChatPanel({
               </motion.span>
             )}
           </AnimatePresence>
+          {user ? (
+            <>
+              <span className="auth-user-email" title={user.email}>{user.email}</span>
+              <button type="button" className="btn-secondary" onClick={onLogout}>
+                Log out
+              </button>
+            </>
+          ) : (
+            <button type="button" className="btn-auth" onClick={onOpenAuth}>
+              Log in
+            </button>
+          )}
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <motion.button
             type="button"
@@ -140,7 +156,7 @@ export default function ChatPanel({
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.15 }}
               >
-                Get live odds, matchups by sport, predictions, or Milano Cortina 2026.
+                Get live odds, matchups, in-depth analysis (value & possible bets), or Milano Cortina 2026.
               </motion.p>
               <div className="quick-prompts">
                 {QUICK_PROMPTS.map((prompt, idx) => (

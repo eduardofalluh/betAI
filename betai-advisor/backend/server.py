@@ -1,22 +1,29 @@
 """
 BetAI Advisor API — Chat by sport category + odds & predictions.
 Uses OpenAI for real LLM conversation when OPENAI_API_KEY is set; falls back to rule-based replies otherwise.
+Auth: signup/login with JWT; chats stored per user.
 """
 import json
 import os
 import uuid
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
+import jwt
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, supports_credentials=True)
+
+JWT_SECRET = os.getenv("JWT_SECRET", "").strip() or os.getenv("OPENAI_API_KEY", "betai-default-secret-change-in-production")
+JWT_ALGORITHM = "HS256"
+JWT_EXP_DAYS = 30
 
 # LLM: load key from env or from encrypted storage (never logged or exposed)
 def _load_openai_key() -> str:
@@ -50,6 +57,8 @@ OPENAI_MODEL_FALLBACKS = [
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 CHATS_FILE = DATA_DIR / "chats.json"
+USERS_FILE = DATA_DIR / "users.json"
+CHATS_DIR = DATA_DIR / "chats"
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "YOUR_ODDS_API_KEY_HERE")
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
@@ -86,30 +95,77 @@ SPORT_TITLES = {
 
 def ensure_data_dir():
     DATA_DIR.mkdir(exist_ok=True)
+    CHATS_DIR.mkdir(exist_ok=True)
     if not CHATS_FILE.exists():
         CHATS_FILE.write_text("{}")
+    if not USERS_FILE.exists():
+        USERS_FILE.write_text("{}")
 
 
-def load_chats():
+def get_user_from_request() -> Optional[str]:
+    """Return user_id from Authorization: Bearer <jwt> or None."""
+    auth = request.headers.get("Authorization")
+    if not auth or not auth.startswith("Bearer "):
+        return None
+    token = auth[7:].strip()
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return payload.get("user_id")
+    except jwt.InvalidTokenError:
+        return None
+
+
+def load_chats(user_id: Optional[str] = None):
+    """Load chats. If user_id given, load from per-user file; else legacy single file."""
     ensure_data_dir()
+    if user_id:
+        path = CHATS_DIR / f"{user_id}.json"
+        if not path.exists():
+            return {}
+        try:
+            return json.loads(path.read_text())
+        except (json.JSONDecodeError, FileNotFoundError):
+            return {}
     try:
         return json.loads(CHATS_FILE.read_text())
     except (json.JSONDecodeError, FileNotFoundError):
         return {}
 
 
-def save_chats(chats):
+def save_chats(chats, user_id: Optional[str] = None):
+    """Save chats. If user_id given, save to per-user file; else legacy single file."""
     ensure_data_dir()
-    CHATS_FILE.write_text(json.dumps(chats, indent=2))
+    if user_id:
+        path = CHATS_DIR / f"{user_id}.json"
+        path.write_text(json.dumps(chats, indent=2))
+    else:
+        CHATS_FILE.write_text(json.dumps(chats, indent=2))
 
 
-def fetch_odds_data(sport_key="basketball_nba", live_only=False):
-    """Fetch odds for a sport. Use sport_key='upcoming' for live + next 8 across all sports."""
+def load_users():
+    ensure_data_dir()
+    try:
+        return json.loads(USERS_FILE.read_text())
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+
+
+def save_users(users):
+    ensure_data_dir()
+    USERS_FILE.write_text(json.dumps(users, indent=2))
+
+
+def fetch_odds_data(sport_key="basketball_nba", live_only=False, markets=None):
+    """Fetch odds for a sport. Use sport_key='upcoming' for live + next 8 across all sports.
+    markets: optional list e.g. ['h2h', 'spreads'] for analysis; default ['h2h']."""
     url = ODDS_API_URL.format(sport_key=sport_key)
+    m = (markets or ["h2h"])
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
-        "markets": "h2h",
+        "markets": ",".join(m) if isinstance(m, list) else m,
         "oddsFormat": "decimal",
     }
     try:
@@ -161,6 +217,83 @@ def fetch_all_sports():
     except Exception as e:
         return []
     return []
+
+
+def _implied_prob(decimal_odds: float) -> float:
+    """Convert decimal odds to implied probability (0-100)."""
+    if not decimal_odds or decimal_odds <= 0:
+        return 0.0
+    return 100.0 / float(decimal_odds)
+
+
+def _build_game_analysis(game: dict) -> str:
+    """Build in-depth analysis block for one game: odds by book, implied prob, best odds, spreads if present."""
+    home = game.get("home_team", "Home")
+    away = game.get("away_team", "Away")
+    lines = [f"## {home} vs {away}", ""]
+    best_h2h = {}  # outcome name -> (best decimal, bookmaker name)
+    book_lines = []
+    for b in game.get("bookmakers", []):
+        book_name = b.get("title", "?")
+        for m in b.get("markets", []):
+            if m.get("key") == "h2h":
+                parts = [f"**{book_name}** (moneyline):"]
+                for o in m.get("outcomes", []):
+                    name = o.get("name", "")
+                    price = o.get("price")
+                    if name and price:
+                        imp = _implied_prob(price)
+                        parts.append(f"  {name}: {price} (implied {imp:.1f}%)")
+                        if name not in best_h2h or price > best_h2h[name][0]:
+                            best_h2h[name] = (price, book_name)
+                book_lines.append(" ".join(parts))
+            elif m.get("key") == "spreads":
+                parts = [f"**{book_name}** (spread):"]
+                for o in m.get("outcomes", []):
+                    name = o.get("name", "")
+                    point = o.get("point")
+                    price = o.get("price")
+                    if name and point is not None and price:
+                        parts.append(f"  {name} {point:+.1f} @ {price}")
+                book_lines.append(" ".join(parts))
+    lines.extend(book_lines)
+    if best_h2h:
+        lines.append("")
+        lines.append("**Best odds by outcome:**")
+        for name, (price, book) in best_h2h.items():
+            imp = _implied_prob(price)
+            lines.append(f"  {name}: {price} at {book} (implied {imp:.1f}%)")
+        total_impl = sum(_implied_prob(best_h2h[n][0]) for n in best_h2h)
+        lines.append(f"  (Combined best-odds implied total: {total_impl:.1f}%; below 100% = potential value.)")
+    return "\n".join(lines)
+
+
+def build_analysis_context(message: str, sport: str) -> str:
+    """Build rich context for in-depth betting analysis: multiple books, implied prob, best odds, spreads."""
+    msg = message.lower().strip()
+    api_key = SPORT_KEY_MAP.get(sport, SPORT_KEY_MAP["basketball"])
+    odds = fetch_odds_data(api_key, markets=["h2h", "spreads"])
+    if isinstance(odds, dict) and "error" in odds:
+        return f"(Could not load odds for analysis: {odds['error']})"
+    games = odds or []
+    # If user mentioned two teams, try to find that matchup
+    if "vs" in msg:
+        parts = msg.split("vs", 1)
+        if len(parts) == 2:
+            t1 = parts[0].strip().lower()
+            t2 = parts[1].strip().lower()
+            for g in games:
+                home = g.get("home_team", "").lower()
+                away = g.get("away_team", "").lower()
+                if (t1 in home and t2 in away) or (t2 in home and t1 in away) or (t1 in away and t2 in home):
+                    return "In-depth odds data for your analysis (use implied %, best odds, and spreads to suggest value and possible bets):\n\n" + _build_game_analysis(g)
+    # Otherwise analyze first 2 upcoming games
+    blocks = []
+    for g in games[:2]:
+        blocks.append(_build_game_analysis(g))
+    if not blocks:
+        return "(No upcoming games with odds for this sport.)"
+    return "In-depth odds data for your analysis (use implied %, best odds, and spreads to suggest value and possible bets):\n\n" + "\n\n---\n\n".join(blocks)
 
 
 def predict_outcome(team1, team2, odds_data):
@@ -288,6 +421,18 @@ def build_odds_context(message: str, sport: str) -> str:
         if isinstance(odds, dict) and "error" not in odds:
             parts.append("(Use the odds data above to say who is the favorite and at what odds.)")
 
+    # In-depth analysis: multiple books, implied probability, best odds, spreads, value
+    analysis_triggers = (
+        "analyze", "analysis", "breakdown", "value", "best bet", "possible bets",
+        "in-depth", "indepth", "statistics", "stats", "recommend", "pick", "picks",
+    )
+    if any(t in msg for t in analysis_triggers) or ("vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who", "analyze"))):
+        analysis_block = build_analysis_context(message, sport)
+        if analysis_block and not analysis_block.startswith("(Could not"):
+            parts.append(analysis_block)
+        elif analysis_block.startswith("(Could not"):
+            parts.append(analysis_block)
+
     if not parts:
         return ""
     return "Current odds data (use this when answering):\n" + "\n\n".join(parts)
@@ -401,6 +546,70 @@ def handle_chat_message(message: str, sport: str) -> str:
     )
 
 
+# ——— Auth ———
+
+def _jwt_expiry():
+    import time
+    return int(time.time()) + (JWT_EXP_DAYS * 86400)
+
+
+@app.route("/auth/signup", methods=["POST"])
+def auth_signup():
+    body = request.get_json() or {}
+    email = (body.get("email") or "").strip().lower()
+    password = (body.get("password") or "").strip()
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    users = load_users()
+    for uid, u in users.items():
+        if u.get("email") == email:
+            return jsonify({"error": "Email already registered"}), 409
+    user_id = str(uuid.uuid4())
+    users[user_id] = {"email": email, "password_hash": generate_password_hash(password)}
+    save_users(users)
+    token = jwt.encode(
+        {"user_id": user_id, "exp": _jwt_expiry()},
+        JWT_SECRET,
+        algorithm=JWT_ALGORITHM,
+    )
+    return jsonify({"token": token, "user": {"id": user_id, "email": email}}), 201
+
+
+@app.route("/auth/login", methods=["POST"])
+def auth_login():
+    body = request.get_json() or {}
+    email = (body.get("email") or "").strip().lower()
+    password = (body.get("password") or "").strip()
+    if not email or not password:
+        return jsonify({"error": "Email and password required"}), 400
+    users = load_users()
+    for uid, u in users.items():
+        if u.get("email") == email:
+            if check_password_hash(u.get("password_hash", ""), password):
+                token = jwt.encode(
+                    {"user_id": uid, "exp": _jwt_expiry()},
+                    JWT_SECRET,
+                    algorithm=JWT_ALGORITHM,
+                )
+                return jsonify({"token": token, "user": {"id": uid, "email": email}})
+            return jsonify({"error": "Invalid password"}), 401
+    return jsonify({"error": "No account with that email"}), 401
+
+
+@app.route("/auth/me", methods=["GET"])
+def auth_me():
+    user_id = get_user_from_request()
+    if not user_id:
+        return jsonify({"error": "Not authenticated"}), 401
+    users = load_users()
+    u = users.get(user_id)
+    if not u:
+        return jsonify({"error": "User not found"}), 401
+    return jsonify({"user": {"id": user_id, "email": u.get("email", "")}})
+
+
 # ——— Routes ———
 
 @app.route("/")
@@ -414,8 +623,11 @@ def index():
 
 @app.route("/chats", methods=["GET"])
 def get_chats():
+    user_id = get_user_from_request()
+    if not user_id:
+        return jsonify({"error": "Log in to load your chats"}), 401
     sport = request.args.get("sport")
-    chats = load_chats()
+    chats = load_chats(user_id)
     if sport:
         return jsonify({sport: chats.get(sport, [])})
     return jsonify(chats)
@@ -423,6 +635,9 @@ def get_chats():
 
 @app.route("/chats", methods=["POST"])
 def post_chat():
+    user_id = get_user_from_request()
+    if not user_id:
+        return jsonify({"error": "Log in to save your chats"}), 401
     body = request.get_json() or {}
     sport = (body.get("sport") or "other").lower().replace(" ", "_")
     title = (body.get("title") or "New chat").strip()
@@ -430,7 +645,7 @@ def post_chat():
     chat_id = body.get("id") or str(uuid.uuid4())
     created_at = body.get("createdAt") or ""
 
-    chats = load_chats()
+    chats = load_chats(user_id)
     if sport not in chats:
         chats[sport] = []
     existing = next((c for c in chats[sport] if c.get("id") == chat_id), None)
@@ -444,22 +659,28 @@ def post_chat():
             "messages": messages,
             "createdAt": created_at,
         })
-    save_chats(chats)
+    save_chats(chats, user_id)
     return jsonify({"ok": True, "chats": chats})
 
 
-SYSTEM_PROMPT = """You are BetAI, a friendly and knowledgeable betting advisor. You help users with sports betting: live odds, matchups, predictions, and responsible gambling tips.
+SYSTEM_PROMPT = """You are BetAI, a friendly and knowledgeable betting advisor. You help users with sports betting: live odds, matchups, predictions, in-depth analysis, and responsible gambling tips.
 
 Current sport context: {sport_label} (user can change sport in the app).
 
 Guidelines:
-- Use any "Current odds data" provided below when answering; cite real odds and matchups when you have them.
-- Be concise but helpful. You can use light markdown (e.g. **bold** for team names or odds).
-- If the user asks for live odds, matchups, or a prediction and data is provided, summarize it clearly.
-- For "who will win" or "should I bet on" questions, name the favorite and the odds when you have the data.
-- Mention Milano Cortina 2026 Olympics when relevant; if no Olympics data is provided, say it may not be in the feed yet.
+- Use any "Current odds data" or "In-depth odds data" provided below when answering; cite real odds, bookmakers, and matchups when you have them.
+- Be concise but helpful. Use light markdown (e.g. **bold** for team names, odds, and key conclusions).
+- For live odds or matchups, summarize clearly. For "who will win" or "should I bet on", name the favorite and the odds.
+
+**In-depth analysis (when the user asks for analysis, value, best bet, possible bets, breakdown, or stats):**
+- Use the provided odds per bookmaker, implied probability (%), best odds by outcome, and spreads when available.
+- Explain in 2–4 short points: (1) who is the favorite and by how much, (2) where the best odds are for each side, (3) whether any line offers value (e.g. combined best-odds implied total below 100%), (4) spreads if relevant.
+- End with **Possible bets**: 1–3 concrete suggestions, e.g. "Team A ML @ 2.10 at [Book]" or "Team B -3.5 @ 1.91 at [Book]", with one-line reasoning. If no clear value, say so and still give a cautious pick.
+- You do not have access to live player or team statistics; base your analysis only on the odds data (implied probabilities, comparison across books, and spreads). If the user asks for "stats" or "statistics", clarify that your analysis is odds-based and suggest they combine it with their own research on form and injuries.
+
+- Mention Milano Cortina 2026 when relevant.
 - Gently remind users to bet responsibly when appropriate.
-- If you don't have specific data, suggest they try "Show live odds" or "Show matchups" for their sport."""
+- If you don't have specific data, suggest "Show live odds", "Show matchups", or "Analyze [Team A] vs [Team B]" for their sport."""
 
 
 @app.route("/chat", methods=["POST"])

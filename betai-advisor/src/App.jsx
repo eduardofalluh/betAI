@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar from './components/Sidebar'
 import ChatPanel from './components/ChatPanel'
+import AuthModal from './components/AuthModal'
+import { useAuth } from './contexts/AuthContext'
 import { getChats, saveChat } from './lib/api'
 import './App.css'
 
@@ -36,6 +38,7 @@ function generateTitle(messages) {
 }
 
 export default function App() {
+  const { user, logout, refreshUser } = useAuth()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatsBySport, setChatsBySport] = useState({})
   const [currentSport, setCurrentSport] = useState('basketball')
@@ -43,6 +46,7 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [lastSavedAt, setLastSavedAt] = useState(null)
   const [theme, setTheme] = useState(getStoredTheme)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
   const autosaveTimerRef = useRef(null)
 
   useEffect(() => {
@@ -55,15 +59,21 @@ export default function App() {
   }, [])
 
   const loadChats = useCallback(async () => {
+    if (!user) {
+      setChatsBySport({})
+      setLoading(false)
+      return
+    }
     try {
       const data = await getChats()
       setChatsBySport(typeof data === 'object' && !Array.isArray(data) ? data : {})
     } catch (e) {
+      if (e?.status === 401) logout()
       setChatsBySport({})
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [user, logout])
 
   useEffect(() => {
     loadChats()
@@ -91,7 +101,8 @@ export default function App() {
 
   const saveCurrentChat = useCallback(async () => {
     const chat = currentChatRef.current
-    if (!chat || !chat.messages?.length) return
+    if (!chat || !chat.messages?.length) return Promise.resolve()
+    if (!user) return Promise.resolve()
     const title = generateTitle(chat.messages)
     const id = chat.id || crypto.randomUUID()
     try {
@@ -106,9 +117,10 @@ export default function App() {
       setLastSavedAt(Date.now())
       await loadChats()
     } catch (e) {
+      if (e?.status === 401) logout()
       console.error('Autosave failed', e)
     }
-  }, [])
+  }, [user, loadChats, logout])
 
   // Autosave: debounce when messages change
   useEffect(() => {
@@ -131,13 +143,20 @@ export default function App() {
     })
   }
 
-  const setCurrentChatSport = (sport) => {
-    setCurrentSport(sport)
-    setCurrentChat(prev => prev ? { ...prev, sport } : { id: null, sport, title: 'New chat', messages: [] })
-  }
+  const handleSportChange = useCallback((sport) => {
+    if (sport === currentSport) return
+    const chat = currentChatRef.current
+    const hasMessages = chat?.messages?.length > 0
+    if (hasMessages) {
+      saveCurrentChat().then(() => startNewChat(sport))
+    } else {
+      startNewChat(sport)
+    }
+  }, [currentSport, saveCurrentChat])
 
   return (
     <div className="app" data-theme={theme}>
+      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
       <motion.button
         className="sidebar-toggle"
         onClick={() => setSidebarOpen(true)}
@@ -160,6 +179,8 @@ export default function App() {
         loading={loading}
         onNewChat={startNewChat}
         onSelectChat={loadChat}
+        user={user}
+        onOpenAuth={() => setAuthModalOpen(true)}
       />
 
       <motion.main
@@ -176,10 +197,13 @@ export default function App() {
             messages={currentChat?.messages ?? []}
             onSendMessage={appendMessage}
             onNewChat={() => startNewChat(currentSport)}
-            onSportChange={setCurrentChatSport}
+            onSportChange={handleSportChange}
             lastSavedAt={lastSavedAt}
             theme={theme}
             onToggleTheme={toggleTheme}
+            user={user}
+            onOpenAuth={() => setAuthModalOpen(true)}
+            onLogout={logout}
           />
         </AnimatePresence>
       </motion.main>

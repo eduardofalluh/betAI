@@ -13,6 +13,8 @@ export default function Sidebar({
   loading,
   onNewChat,
   onSelectChat,
+  user,
+  onOpenAuth,
 }) {
   const [filter, setFilter] = useState('sport') // 'sport' | 'recent'
 
@@ -64,6 +66,11 @@ export default function Sidebar({
             <button type="button" className="new-chat-btn" onClick={() => onNewChat()}>
               + New chat
             </button>
+            {!user && (
+              <button type="button" className="sidebar-login-hint" onClick={() => { onOpenAuth?.(); onClose(); }}>
+                Log in to save & load your chats
+              </button>
+            )}
             <div className="sidebar-filter">
               <button
                 type="button"
