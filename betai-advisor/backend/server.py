@@ -32,14 +32,18 @@ def _load_openai_key() -> str:
     return ""
 
 OPENAI_API_KEY = _load_openai_key()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "").strip() or "gpt-3.5-turbo"
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "").strip() or "gpt-5.2"
 # Try these in order when the project doesn't have access to the default model
 OPENAI_MODEL_FALLBACKS = [
-    "gpt-4o-mini",
+    "gpt-5.2",
+    "gpt-5.2-2025-12-11",
+    "gpt-5.1",
+    "gpt-5.1-2025-11-13",
+    "gpt-5-mini",
+    "gpt-5-mini-2025-08-07",
+    "gpt-5-pro",
+    "gpt-5-pro-2025-10-06",
     "gpt-4o",
-    "gpt-4-turbo",
-    "gpt-4",
-    "gpt-3.5-turbo",
 ]
 
 # Paths
