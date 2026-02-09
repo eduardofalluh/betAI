@@ -1,4 +1,7 @@
+import { useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+
+const RECENT_LIMIT = 30
 
 export default function Sidebar({
   isOpen,
@@ -6,10 +9,33 @@ export default function Sidebar({
   sports,
   chatsBySport,
   currentSport,
+  currentChatId,
   loading,
   onNewChat,
   onSelectChat,
 }) {
+  const [filter, setFilter] = useState('sport') // 'sport' | 'recent'
+
+  const sportLabel = sports.find((s) => s.key === currentSport)?.label || currentSport
+  const sportIcon = sports.find((s) => s.key === currentSport)?.icon || '📋'
+
+  const chatList = useMemo(() => {
+    if (filter === 'sport') {
+      const list = (chatsBySport[currentSport] || [])
+        .slice()
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+      return list.map((chat) => ({ ...chat, sport: currentSport, sportLabel, sportIcon }))
+    }
+    const flat = []
+    Object.entries(chatsBySport).forEach(([sportKey, chats]) => {
+      const label = sports.find((s) => s.key === sportKey)?.label || sportKey
+      const icon = sports.find((s) => s.key === sportKey)?.icon || '📋'
+      ;(chats || []).forEach((c) => flat.push({ ...c, sport: sportKey, sportLabel: label, sportIcon: icon }))
+    })
+    flat.sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    return flat.slice(0, RECENT_LIMIT)
+  }, [filter, currentSport, chatsBySport, sports, sportLabel, sportIcon])
+
   return (
     <AnimatePresence>
       {isOpen && (
@@ -38,44 +64,58 @@ export default function Sidebar({
             <button type="button" className="new-chat-btn" onClick={() => onNewChat()}>
               + New chat
             </button>
-            <div className="sidebar-sports">
-              {sports.map((sport) => {
-                const chats = chatsBySport[sport.key] || []
-                const isActive = currentSport === sport.key
-                return (
-                  <div key={sport.key} className="sport-section">
-                    <div className={`sport-heading ${isActive ? 'active' : ''}`}>
-                      <span className="sport-icon">{sport.icon}</span>
-                      <span className="sport-label">{sport.label}</span>
-                      <span className="chat-count">{chats.length}</span>
-                    </div>
-                    <div className="chat-list">
-                      {loading ? (
-                        <div className="chat-item placeholder">Loading…</div>
-                      ) : chats.length === 0 ? (
-                        <button
-                          type="button"
-                          className="chat-item new-in-sport"
-                          onClick={() => onNewChat(sport.key)}
-                        >
-                          Start {sport.label} chat
-                        </button>
-                      ) : (
-                        chats.map((chat) => (
-                          <button
-                            key={chat.id}
-                            type="button"
-                            className="chat-item"
-                            onClick={() => onSelectChat(sport.key, chat)}
-                          >
-                            {chat.title || 'Untitled'}
-                          </button>
-                        ))
+            <div className="sidebar-filter">
+              <button
+                type="button"
+                className={`filter-btn ${filter === 'sport' ? 'active' : ''}`}
+                onClick={() => setFilter('sport')}
+              >
+                <span className="filter-icon">{sportIcon}</span>
+                {sportLabel}
+              </button>
+              <button
+                type="button"
+                className={`filter-btn ${filter === 'recent' ? 'active' : ''}`}
+                onClick={() => setFilter('recent')}
+              >
+                <span className="filter-icon">🕐</span>
+                All recent
+              </button>
+            </div>
+            <div className="sidebar-chat-list">
+              {loading ? (
+                <div className="chat-item placeholder">Loading…</div>
+              ) : chatList.length === 0 ? (
+                <div className="chat-item empty">
+                  {filter === 'sport' ? `No ${sportLabel} chats yet` : 'No chats yet'}
+                </div>
+              ) : (
+                <AnimatePresence initial={false}>
+                  {chatList.map((chat, idx) => (
+                    <motion.button
+                      key={`${chat.sport}-${chat.id}`}
+                      type="button"
+                      className={`chat-item ${currentChatId === chat.id ? 'active' : ''}`}
+                      onClick={() => onSelectChat(chat.sport, chat)}
+                      layout
+                      initial={{ opacity: 0, x: -12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -8 }}
+                      transition={{ type: 'spring', stiffness: 400, damping: 30, delay: idx * 0.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <span className="chat-item-title" title={chat.title || 'Untitled'}>
+                        {chat.title || 'Untitled'}
+                      </span>
+                      {filter === 'recent' && (
+                        <span className="chat-item-sport" title={chat.sportLabel}>
+                          {chat.sportIcon} {chat.sportLabel}
+                        </span>
                       )}
-                    </div>
-                  </div>
-                )
-              })}
+                    </motion.button>
+                  ))}
+                </AnimatePresence>
+              )}
             </div>
           </motion.aside>
         </>

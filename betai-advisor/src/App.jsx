@@ -1,9 +1,18 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Sidebar from './components/Sidebar'
 import ChatPanel from './components/ChatPanel'
 import { getChats, saveChat } from './lib/api'
 import './App.css'
+
+const THEME_KEY = 'betai-theme'
+function getStoredTheme() {
+  try {
+    const t = localStorage.getItem(THEME_KEY)
+    if (t === 'light' || t === 'dark') return t
+  } catch (_) {}
+  return 'dark'
+}
 
 const SPORTS = [
   { key: 'basketball', label: 'Basketball', icon: '🏀' },
@@ -16,6 +25,8 @@ const SPORTS = [
   { key: 'olympics', label: 'Milano Cortina 2026', icon: '⛷️' },
   { key: 'other', label: 'Other', icon: '📋' },
 ]
+
+const AUTOSAVE_DELAY_MS = 1500
 
 function generateTitle(messages) {
   const first = messages.find(m => m.sender === 'user')
@@ -30,6 +41,18 @@ export default function App() {
   const [currentSport, setCurrentSport] = useState('basketball')
   const [currentChat, setCurrentChat] = useState(null) // { id, sport, title, messages }
   const [loading, setLoading] = useState(true)
+  const [lastSavedAt, setLastSavedAt] = useState(null)
+  const [theme, setTheme] = useState(getStoredTheme)
+  const autosaveTimerRef = useRef(null)
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    try { localStorage.setItem(THEME_KEY, theme) } catch (_) {}
+  }, [theme])
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'))
+  }, [])
 
   const loadChats = useCallback(async () => {
     try {
@@ -63,24 +86,40 @@ export default function App() {
     setSidebarOpen(false)
   }
 
-  const saveCurrentChat = async () => {
-    if (!currentChat || currentChat.messages.length === 0) return
-    const title = generateTitle(currentChat.messages)
-    const id = currentChat.id || crypto.randomUUID()
+  const currentChatRef = useRef(currentChat)
+  currentChatRef.current = currentChat
+
+  const saveCurrentChat = useCallback(async () => {
+    const chat = currentChatRef.current
+    if (!chat || !chat.messages?.length) return
+    const title = generateTitle(chat.messages)
+    const id = chat.id || crypto.randomUUID()
     try {
       await saveChat({
-        sport: currentChat.sport,
+        sport: chat.sport,
         title,
-        messages: currentChat.messages,
+        messages: chat.messages,
         id,
-        createdAt: new Date().toISOString(),
+        createdAt: chat.createdAt || new Date().toISOString(),
       })
       setCurrentChat((prev) => (prev ? { ...prev, id } : null))
+      setLastSavedAt(Date.now())
       await loadChats()
     } catch (e) {
-      console.error('Save chat failed', e)
+      console.error('Autosave failed', e)
     }
-  }
+  }, [])
+
+  // Autosave: debounce when messages change
+  useEffect(() => {
+    if (!currentChat?.messages?.length) return
+    const timer = window.setTimeout(() => {
+      const chat = currentChatRef.current
+      if (!chat?.messages?.length) return
+      saveCurrentChat()
+    }, AUTOSAVE_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [currentChat?.messages, saveCurrentChat])
 
   const appendMessage = (sender, text) => {
     setCurrentChat(prev => {
@@ -98,7 +137,7 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app" data-theme={theme}>
       <motion.button
         className="sidebar-toggle"
         onClick={() => setSidebarOpen(true)}
@@ -117,6 +156,7 @@ export default function App() {
         sports={SPORTS}
         chatsBySport={chatsBySport}
         currentSport={currentSport}
+        currentChatId={currentChat?.id}
         loading={loading}
         onNewChat={startNewChat}
         onSelectChat={loadChat}
@@ -136,9 +176,10 @@ export default function App() {
             messages={currentChat?.messages ?? []}
             onSendMessage={appendMessage}
             onNewChat={() => startNewChat(currentSport)}
-            onSaveChat={saveCurrentChat}
             onSportChange={setCurrentChatSport}
-            hasUnsavedMessages={currentChat?.messages?.length > 0 && !currentChat?.id}
+            lastSavedAt={lastSavedAt}
+            theme={theme}
+            onToggleTheme={toggleTheme}
           />
         </AnimatePresence>
       </motion.main>

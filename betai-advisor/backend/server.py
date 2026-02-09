@@ -306,6 +306,9 @@ def call_openai(system_prompt: str, conversation: List[dict], context: str = "")
         if r.choices and len(r.choices) > 0:
             return (r.choices[0].message.content or "").strip()
     except Exception as e:
+        err = str(e)
+        if "403" in err or "Project" in err or "billing" in err.lower():
+            return "(LLM error: 403 - Your BetAI project has $0 billing. Add payment to that project at platform.openai.com (Billing), or create an API key in the project that has your $10 (e.g. Default) and set OPENAI_API_KEY on Render to that key. See OPENAI-BILLING-FIX.md.)"
         return f"(LLM error: {e!s})"
     return ""
 
@@ -460,8 +463,11 @@ def chat():
     if llm_error == "not_configured":
         reply += "\n\n_To get **real AI replies**, add **OPENAI_API_KEY** in Render: Dashboard → your service (betAI) → Environment → Add variable OPENAI_API_KEY = your OpenAI key._"
     elif llm_error:
-        err_preview = (llm_error[:80] + "…") if len(llm_error) > 80 else llm_error
-        reply += "\n\n_(LLM failed: " + err_preview + " — check OPENAI_API_KEY on Render.)_"
+        if "403" in llm_error or "BetAI project" in llm_error:
+            reply += "\n\n_**AI replies are off:** Your OpenAI **BetAI** project has **$0** billing. Either add payment to that project, or create an API key in the project that has your $10 (e.g. **Default**), then set that key as OPENAI_API_KEY on Render and redeploy. See repo file **OPENAI-BILLING-FIX.md** for steps._"
+        else:
+            err_preview = (llm_error[:80] + "…") if len(llm_error) > 80 else llm_error
+            reply += "\n\n_(LLM failed: " + err_preview + " — check OPENAI_API_KEY on Render.)_"
     return jsonify({"reply": reply})
 
 
@@ -478,6 +484,27 @@ def status():
         "llm_configured": bool(OPENAI_API_KEY),
         "odds_configured": bool(ODDS_API_KEY and ODDS_API_KEY != "YOUR_ODDS_API_KEY_HERE"),
     })
+
+
+@app.route("/llm-check", methods=["GET"])
+def llm_check():
+    """Try one OpenAI call and return success or the exact error (for debugging 403)."""
+    if not OPENAI_API_KEY:
+        return jsonify({"ok": False, "error": "OPENAI_API_KEY not set on Render"}), 200
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        r = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": "Say OK"}],
+            max_tokens=10,
+        )
+        if r.choices and r.choices[0].message.content:
+            return jsonify({"ok": True, "message": "LLM is working"}), 200
+        return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 200
+    except Exception as e:
+        err = str(e)
+        return jsonify({"ok": False, "error": err}), 200
 
 
 if __name__ == "__main__":

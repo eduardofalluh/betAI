@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import MessageBubble from './MessageBubble'
+import ThemeToggle from './ThemeToggle'
 import { sendMessage } from '../lib/api'
 
 const QUICK_PROMPTS = [
@@ -17,17 +18,29 @@ export default function ChatPanel({
   messages,
   onSendMessage,
   onNewChat,
-  onSaveChat,
   onSportChange,
-  hasUnsavedMessages,
+  lastSavedAt,
+  theme,
+  onToggleTheme,
 }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const bottomRef = useRef(null)
+  const [showSaved, setShowSaved] = useState(false)
+  const savedTimeoutRef = useRef(null)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    if (lastSavedAt && messages.length > 0) {
+      setShowSaved(true)
+      if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current)
+      savedTimeoutRef.current = setTimeout(() => setShowSaved(false), 2000)
+    }
+    return () => { if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current) }
+  }, [lastSavedAt, messages.length])
 
   const handleSend = async (text = input.trim()) => {
     if (!text) return
@@ -78,14 +91,30 @@ export default function ChatPanel({
           </button>
         </div>
         <div className="chat-header-actions">
-          {hasUnsavedMessages && (
-            <button type="button" className="btn-secondary" onClick={onSaveChat}>
-              Save chat
-            </button>
-          )}
-          <button type="button" className="btn-secondary" onClick={onNewChat}>
+          <AnimatePresence mode="wait">
+            {showSaved && (
+              <motion.span
+                className="saved-indicator"
+                aria-live="polite"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+              >
+                Saved
+              </motion.span>
+            )}
+          </AnimatePresence>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
+          <motion.button
+            type="button"
+            className="btn-secondary"
+            onClick={onNewChat}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
             New chat
-          </button>
+          </motion.button>
         </div>
       </header>
 
@@ -94,22 +123,40 @@ export default function ChatPanel({
           {messages.length === 0 && (
             <motion.div
               className="empty-state"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
             >
-              <h3>Your betting agent</h3>
-              <p>Get live odds, matchups by sport, predictions, or Milano Cortina 2026.</p>
+              <motion.h3
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.1 }}
+              >
+                Your betting agent
+              </motion.h3>
+              <motion.p
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.15 }}
+              >
+                Get live odds, matchups by sport, predictions, or Milano Cortina 2026.
+              </motion.p>
               <div className="quick-prompts">
-                {QUICK_PROMPTS.map((prompt) => (
-                  <button
+                {QUICK_PROMPTS.map((prompt, idx) => (
+                  <motion.button
                     key={prompt}
                     type="button"
                     className="quick-prompt"
                     onClick={() => handleSend(prompt)}
+                    initial={{ opacity: 0, y: 12 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 + idx * 0.06, type: 'spring', stiffness: 300, damping: 24 }}
+                    whileHover={{ scale: 1.03, y: -2 }}
+                    whileTap={{ scale: 0.98 }}
                   >
                     {prompt}
-                  </button>
+                  </motion.button>
                 ))}
               </div>
             </motion.div>
@@ -119,10 +166,11 @@ export default function ChatPanel({
           ))}
           {loading && (
             <motion.div
-              className="message bot"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+              className="message bot typing-message"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
             >
               <span className="typing-dots">
                 <span>.</span><span>.</span><span>.</span>
@@ -148,8 +196,9 @@ export default function ChatPanel({
           className="send-btn"
           onClick={() => handleSend()}
           disabled={!input.trim() || loading}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
         >
           Send
         </motion.button>

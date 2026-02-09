@@ -25,9 +25,14 @@ export default function MessageBubble({ sender, text, index }) {
   return (
     <motion.div
       className={`message ${sender}`}
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3, delay: index * 0.04 }}
+      initial={{ opacity: 0, y: 16, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{
+        type: 'spring',
+        stiffness: 400,
+        damping: 30,
+        delay: index * 0.03,
+      }}
     >
       <div className="message-inner">
         {lines.map(({ key, parts }) => (
