@@ -6,7 +6,7 @@ services:
     runtime: python
     rootDir: betai-advisor/backend
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT server:app
+    startCommand: python run.py
     envVars:
       - key: OPENAI_API_KEY
         sync: false

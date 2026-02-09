@@ -12,7 +12,7 @@ Deploy the **backend** to Render (free tier) and the **frontend** to Vercel (fre
 4. Set:
    - **Root Directory:** `betai-advisor/backend`
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `gunicorn -w 1 -b 0.0.0.0:$PORT server:app`
+   - **Start Command:** `python run.py` (binds to 0.0.0.0 and PORT automatically)
    - **Instance Type:** Free
 5. **Environment** (in the dashboard):
    - `OPENAI_API_KEY` = your OpenAI API key (required for LLM)
