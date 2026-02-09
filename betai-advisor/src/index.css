@@ -5,9 +5,9 @@
   --bg-elevated: #12121a;
   --bg-hover: #1a1a24;
   --bg-glass: rgba(18, 18, 26, 0.85);
-  --bg-mesh: radial-gradient(ellipse 140% 100% at 50% -30%, rgba(232, 184, 74, 0.06), transparent 50%),
-             radial-gradient(ellipse 80% 60% at 100% 20%, rgba(120, 80, 200, 0.04), transparent 45%),
-             radial-gradient(ellipse 70% 70% at 0% 70%, rgba(232, 184, 74, 0.03), transparent 45%);
+  --bg-mesh: radial-gradient(ellipse 140% 100% at 50% -20%, rgba(232, 184, 74, 0.14), transparent 45%),
+             radial-gradient(ellipse 90% 70% at 100% 10%, rgba(120, 80, 200, 0.08), transparent 45%),
+             radial-gradient(ellipse 80% 80% at 0% 60%, rgba(232, 184, 74, 0.06), transparent 45%);
   --border: rgba(255, 255, 255, 0.06);
   --border-strong: rgba(255, 255, 255, 0.1);
   --text: #f2f2f4;
@@ -42,8 +42,8 @@
   --bg-elevated: #ffffff;
   --bg-hover: #eeebe6;
   --bg-glass: rgba(255, 255, 255, 0.9);
-  --bg-mesh: radial-gradient(ellipse 140% 100% at 50% -30%, rgba(232, 184, 74, 0.1), transparent 50%),
-             radial-gradient(ellipse 80% 60% at 100% 20%, rgba(120, 80, 200, 0.05), transparent 45%);
+  --bg-mesh: radial-gradient(ellipse 140% 100% at 50% -20%, rgba(232, 184, 74, 0.18), transparent 50%),
+             radial-gradient(ellipse 90% 70% at 100% 10%, rgba(120, 80, 200, 0.1), transparent 45%);
   --border: rgba(0, 0, 0, 0.06);
   --border-strong: rgba(0, 0, 0, 0.12);
   --text: #1a1a1e;
