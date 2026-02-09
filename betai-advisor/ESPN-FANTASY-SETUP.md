@@ -33,11 +33,13 @@ Add to your backend environment (e.g. Render → Service → Environment):
 |----------------|----------|----------|
 | **ESPN_LEAGUE_ID** | `469892829` | Yes      |
 | **ESPN_YEAR**      | `2026`     | Yes      |
+| **ESPN_PAST_YEARS** | `2024,2023` | Optional (standings + top scorers; default: previous year) |
 | **ESPN_S2**        | *(long string)* | Only for **private** leagues |
 | **ESPN_SWID**      | `{...}`  | Only for **private** leagues |
 
 - **Public leagues:** `ESPN_LEAGUE_ID` + `ESPN_YEAR` are enough.
 - **Private leagues:** you must also set **ESPN_S2** and **ESPN_SWID** from your browser cookies (see below).
+- **Past seasons (optional):** set **ESPN_PAST_YEARS** to a comma-separated list (e.g. `2024,2023`) to include standings and top scorers from those years. If unset, the previous year (`ESPN_YEAR - 1`) is used. The AI can then answer “how did my league do last year?”, “past season standings”, “who were the top scorers?”.
 
 ---
 
@@ -59,5 +61,6 @@ Set them as **ESPN_S2** and **ESPN_SWID** in your backend env. They expire; if �
 After saving env vars and redeploying, in the app (with **Basketball** selected) try:
 - *Who should I pick up?*
 - *Is Tyrese Haliburton a good pickup?*
+- *How did my league do last year?* / *Past season standings* (uses ESPN past-season data if configured)
 
 If ESPN isn’t configured, the AI will say to set **ESPN_LEAGUE_ID** and **ESPN_YEAR** (and cookies for private leagues).

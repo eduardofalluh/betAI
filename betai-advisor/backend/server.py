@@ -72,6 +72,9 @@ ESPN_LEAGUE_ID = os.getenv("ESPN_LEAGUE_ID", "").strip()
 ESPN_YEAR = int(os.getenv("ESPN_YEAR", "0") or "0")
 ESPN_S2 = os.getenv("ESPN_S2", "").strip() or None
 ESPN_SWID = os.getenv("ESPN_SWID", "").strip() or None
+# Optional: comma-separated past years for standings + top scorers (e.g. "2024,2023"). If unset, use previous year only.
+ESPN_PAST_YEARS_RAW = os.getenv("ESPN_PAST_YEARS", "").strip()
+ESPN_PAST_YEARS = [int(y.strip()) for y in ESPN_PAST_YEARS_RAW.split(",") if y.strip().isdigit()] if ESPN_PAST_YEARS_RAW else []
 
 # Frontend sport key -> Odds API key (multiple keys tried for Olympics)
 SPORT_KEY_MAP = {
@@ -515,6 +518,62 @@ def fetch_espn_fantasy_basketball():
     return "\n".join(lines)
 
 
+def fetch_espn_past_seasons():
+    """
+    Fetch standings and top scorers for past ESPN Fantasy Basketball seasons.
+    Uses ESPN_PAST_YEARS (comma-separated) or previous year (ESPN_YEAR - 1).
+    Returns a string block for the LLM, or empty string if not configured / fails.
+    """
+    if not ESPN_LEAGUE_ID:
+        return ""
+    years_to_fetch = ESPN_PAST_YEARS if ESPN_PAST_YEARS else ([ESPN_YEAR - 1] if ESPN_YEAR and ESPN_YEAR > 2018 else [])
+    if not years_to_fetch:
+        return ""
+    try:
+        from espn_api.basketball import League
+    except ImportError:
+        return ""
+    out = []
+    for year in years_to_fetch:
+        if year < 2019:
+            continue
+        try:
+            league = League(
+                league_id=int(ESPN_LEAGUE_ID),
+                year=year,
+                espn_s2=ESPN_S2,
+                swid=ESPN_SWID,
+            )
+            standings = league.standings()
+            lines = [f"ESPN Fantasy Basketball — {year} season (general stats):"]
+            if standings:
+                lines.append("Standings:")
+                for i, t in enumerate(standings[:12], 1):
+                    name = getattr(t, "team_name", "?")
+                    w = getattr(t, "wins", 0)
+                    l = getattr(t, "losses", 0)
+                    lines.append(f"  {i}. {name} ({w}-{l})")
+            all_players = []
+            for t in standings or []:
+                roster = getattr(t, "roster", []) or []
+                for p in roster:
+                    avg = getattr(p, "avg_points", None)
+                    if avg is not None and avg > 0:
+                        all_players.append((getattr(p, "name", "?"), getattr(p, "position", "?"), float(avg), getattr(p, "total_points", None)))
+            all_players.sort(key=lambda x: (x[2], x[3] or 0), reverse=True)
+            if all_players:
+                lines.append("Top scorers (season avg pts, total pts):")
+                for name, pos, avg_pts, total in all_players[:20]:
+                    total_str = f", total {total}" if total is not None else ""
+                    lines.append(f"  • {name} ({pos}): {avg_pts:.1f} avg{total_str}")
+            out.append("\n".join(lines))
+        except Exception as e:
+            out.append(f"(Past season {year}: could not load — {e!s})")
+    if not out:
+        return ""
+    return "\n\n".join(out)
+
+
 def build_odds_context(message: str, sport: str) -> str:
     """Fetch relevant odds/live data. Always include current-sport matchups so the specialist can answer."""
     msg = message.lower().strip()
@@ -542,10 +601,14 @@ def build_odds_context(message: str, sport: str) -> str:
         "who should i pick", "who to pick up", "good pickup", "fantasy basketball",
         "fantasy points", "who to add", "should i add", "drop and add",
         "recommend", "recommendation", "player names", "give me names", "suggest",
+        "past season", "last year", "last season", "standings", "how did i do", "league history",
     )
     if sport == "basketball" and any(t in msg for t in fantasy_triggers):
         espn_block = fetch_espn_fantasy_basketball()
         parts.append(espn_block)
+        past_block = fetch_espn_past_seasons()
+        if past_block:
+            parts.append(past_block)
 
     # Olympics / Milano Cortina (try multiple API keys + upcoming feed)
     if any(x in msg for x in ("olympics", "milano", "cortina", "2026 winter")) or sport == "olympics":
@@ -890,7 +953,8 @@ SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a de
 4. For analysis/value/best bet requests: use implied %, best odds by book, and spreads when given; end with **Possible bets**: 1–3 concrete picks (e.g. "Lakers ML @ 2.10 at DraftKings") with one-line reasoning.
 5. You are the {sport_label} expert: frame answers in terms of this sport (e.g. NBA, Champions League, NFL) and its upcoming games. Do not give generic "I can help with…" replies when odds are provided—give a direct answer using the numbers.
 6. When "ESPN Fantasy Basketball" data is provided (free agents with avg pts, total pts, projected avg): use it to answer "who should I pick up", "is [player] a good pickup", "who to add". Recommend 1–3 specific players from the list with a one-line reason; if the user asks about a named player, say whether they appear in the free agents list and whether they look like a good add based on the stats.
-7. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
+7. When "ESPN Fantasy Basketball — [year] season (general stats)" is provided (standings, top scorers): use it to answer "how did my league do", "last year standings", "past season", "who were the top scorers". Reference actual team names and player names from the data.
+8. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
 
 
 VISION_SYSTEM_ADDON = (
