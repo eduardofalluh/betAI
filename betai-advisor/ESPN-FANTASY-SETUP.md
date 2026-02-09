@@ -21,6 +21,12 @@ The app uses the **espn-api** Python package and your league’s **free agents**
 
 ## 2. Set env vars (Render or local)
 
+**If you use the app at betai.netlify.app**, the backend runs on **Render**. You must add these variables there or the AI will say it doesn’t have access to player data.
+
+1. Open **Render** → your **BetAI Web Service** (backend) → **Environment**.
+2. Add **ESPN_LEAGUE_ID** and **ESPN_YEAR** (values below). Save — Render will redeploy.
+3. Wait 1–2 minutes, then try again in the app (Basketball → *Who should I pick up?*).
+
 Add to your backend environment (e.g. Render → Service → Environment):
 
 | Variable        | Example  | Required |

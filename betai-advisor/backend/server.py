@@ -536,11 +536,12 @@ def build_odds_context(message: str, sport: str) -> str:
         elif isinstance(by_sport, dict) and "error" in by_sport:
             parts.append(f"(Live odds could not be loaded: {by_sport['error']})")
 
-    # ESPN Fantasy Basketball: who to pick up, is X a good pickup, free agents
+    # ESPN Fantasy Basketball: who to pick up, is X a good pickup, free agents, follow-ups
     fantasy_triggers = (
         "pick up", "pickup", "free agent", "add player", "waiver",
         "who should i pick", "who to pick up", "good pickup", "fantasy basketball",
         "fantasy points", "who to add", "should i add", "drop and add",
+        "recommend", "recommendation", "player names", "give me names", "suggest",
     )
     if sport == "basketball" and any(t in msg for t in fantasy_triggers):
         espn_block = fetch_espn_fantasy_basketball()
