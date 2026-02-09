@@ -64,6 +64,7 @@ CHATS_DIR = DATA_DIR / "chats"
 
 ODDS_API_KEY = os.getenv("ODDS_API_KEY", "YOUR_ODDS_API_KEY_HERE")
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
+ODDS_SCORES_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/scores/"
 SPORTS_API_URL = "https://api.the-odds-api.com/v4/sports/"
 
 # Frontend sport key -> Odds API key (multiple keys tried for Olympics)
@@ -179,14 +180,43 @@ def fetch_odds_data(sport_key="basketball_nba", live_only=False, markets=None):
     return {"error": f"API Error: {r.status_code}"}
 
 
+def fetch_scores(sport_key="upcoming", days_from=1):
+    """Fetch live and recent scores (in-play + completed). Used to show current score alongside odds.
+    Odds API: live odds update ~every 30s during games; scores endpoint gives current/last score."""
+    url = ODDS_SCORES_URL.format(sport_key=sport_key)
+    params = {"apiKey": ODDS_API_KEY}
+    if days_from is not None:
+        params["daysFrom"] = days_from
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        return []
+    return []
+
+
 def fetch_live_upcoming_odds():
     """
     Fetch live and upcoming games across all sports (Odds API sport_key='upcoming').
+    Enriches with live/recent scores when available (Scores API). Odds update ~every 30s when in-play.
     Returns games grouped by sport for conversational display.
     """
     data = fetch_odds_data("upcoming")
     if isinstance(data, dict) and "error" in data:
         return data
+    # Fetch scores for in-play and recently completed (same API; scores have event id, home_score, away_score)
+    scores_list = fetch_scores("upcoming", days_from=1)
+    scores_by_id = {}
+    for ev in scores_list or []:
+        eid = ev.get("id")
+        if not eid:
+            continue
+        home_s = ev.get("home_score")
+        away_s = ev.get("away_score")
+        completed = ev.get("completed", False)
+        if home_s is not None and away_s is not None:
+            scores_by_id[eid] = {"home": home_s, "away": away_s, "completed": completed}
     by_sport = {}
     for event in data or []:
         sk = event.get("sport_key", "other")
@@ -196,16 +226,20 @@ def fetch_live_upcoming_odds():
         home = event.get("home_team", "?")
         away = event.get("away_team", "?")
         commence = event.get("commence_time", "")[:16].replace("T", " ")
+        score_str = None
+        eid = event.get("id")
+        if eid and eid in scores_by_id:
+            s = scores_by_id[eid]
+            score_str = f"{s['home']}-{s['away']}" + (" (FT)" if s.get("completed") else " (Live)")
         for b in event.get("bookmakers", [])[:1]:
             for m in b.get("markets", []):
                 if m.get("key") != "h2h":
                     continue
                 odds_str = ", ".join(f"{o['name']}: {o['price']}" for o in m.get("outcomes", []))
-                by_sport[title].append({
-                    "match": f"{home} vs {away}",
-                    "odds": odds_str,
-                    "commence": commence,
-                })
+                item = {"match": f"{home} vs {away}", "odds": odds_str, "commence": commence}
+                if score_str:
+                    item["score"] = score_str
+                by_sport[title].append(item)
                 break
             break
     return by_sport
@@ -346,11 +380,14 @@ def format_live_upcoming_reply(by_sport):
             "Try asking for matchups for a specific sport (e.g. *Show NBA matchups*), "
             "or *Milano Cortina 2026* Olympics when available."
         )
-    lines = ["Here’s what’s **live or coming up** across sports:\n"]
+    lines = ["Here’s what’s **live or coming up** across sports (odds update ~every 30s when in-play):\n"]
     for sport_name, games in by_sport.items():
         lines.append(f"**{sport_name}**")
         for g in games[:5]:
-            lines.append(f"• {g['match']} — {g['odds']}")
+            part = f"• {g['match']}"
+            if g.get("score"):
+                part += f" **{g['score']}**"
+            lines.append(part + f" — {g['odds']}")
         if len(games) > 5:
             lines.append(f"  _…and {len(games) - 5} more_")
         lines.append("")

@@ -43,3 +43,10 @@ Render will redeploy automatically. Wait 1–2 minutes for the deploy to finish.
 - For light use (a few live odds / matchups per day), the free tier is usually enough.
 
 That’s it. Once **ODDS_API_KEY** is set on Render, the agent can fetch live odds and the LLM can use that data in its answers.
+
+---
+
+## Live odds and scores (how “live” is it?)
+
+- **Odds:** The Odds API refreshes odds **every few minutes** for pre-game and **roughly every 30 seconds** when games are in-play. The app uses their “upcoming” feed (live + next games) and, when available, their **Scores API** so you see current score (e.g. **98–95 (Live)**) next to odds.
+- **True second-by-second stats:** If you need play-by-play, every stat the moment it happens, you’d need a dedicated **live stats** provider (e.g. Sportradar, Genius Sports, or similar). Those are separate, often enterprise-level APIs; BetAI uses The Odds API for odds + scores only.
