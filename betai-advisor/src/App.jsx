@@ -133,12 +133,13 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [currentChat?.messages, saveCurrentChat])
 
-  const appendMessage = (sender, text) => {
+  const appendMessage = (sender, text, images = null) => {
     setCurrentChat(prev => {
-      if (!prev) return { id: null, sport: currentSport, title: 'New chat', messages: [{ sender, text }] }
+      const msg = images?.length ? { sender, text, images } : { sender, text }
+      if (!prev) return { id: null, sport: currentSport, title: 'New chat', messages: [msg] }
       return {
         ...prev,
-        messages: [...prev.messages, { sender, text }],
+        messages: [...prev.messages, msg],
       }
     })
   }

@@ -18,9 +18,9 @@ function formatText(text) {
   })
 }
 
-export default function MessageBubble({ sender, text, index }) {
+export default function MessageBubble({ sender, text, images, index }) {
   const lines = formatText(text)
-  const isUser = sender === 'user'
+  const hasImages = Array.isArray(images) && images.length > 0
 
   return (
     <motion.div
@@ -35,7 +35,7 @@ export default function MessageBubble({ sender, text, index }) {
       }}
     >
       <div className="message-inner">
-        {lines.map(({ key, parts }) => (
+        {text && lines.map(({ key, parts }) => (
           <div key={key} className="message-line">
             {parts.map((p, i) =>
               p.type === 'bold' ? (
@@ -46,6 +46,13 @@ export default function MessageBubble({ sender, text, index }) {
             )}
           </div>
         ))}
+        {hasImages && (
+          <div className="message-images">
+            {images.map((src, i) => (
+              <img key={i} src={src} alt="" className="message-image" />
+            ))}
+          </div>
+        )}
       </div>
     </motion.div>
   )

@@ -4,6 +4,10 @@ import MessageBubble from './MessageBubble'
 import ThemeToggle from './ThemeToggle'
 import { sendMessage } from '../lib/api'
 
+const MAX_IMAGES = 5
+const MAX_FILE_SIZE_MB = 8
+const ACCEPT_IMAGES = 'image/jpeg,image/png,image/webp,image/gif'
+
 const QUICK_PROMPTS = [
   'Show live odds',
   'What\'s on now?',
@@ -29,6 +33,8 @@ export default function ChatPanel({
 }) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [attachedImages, setAttachedImages] = useState([]) // data URLs
+  const fileInputRef = useRef(null)
   const bottomRef = useRef(null)
   const [showSaved, setShowSaved] = useState(false)
   const savedTimeoutRef = useRef(null)
@@ -46,13 +52,53 @@ export default function ChatPanel({
     return () => { if (savedTimeoutRef.current) clearTimeout(savedTimeoutRef.current) }
   }, [lastSavedAt, messages.length])
 
+  const addImages = (files) => {
+    if (!files?.length) return
+    const remaining = MAX_IMAGES - attachedImages.length
+    if (remaining <= 0) return
+    const list = Array.from(files).slice(0, remaining)
+    const maxBytes = MAX_FILE_SIZE_MB * 1024 * 1024
+    list.forEach((file) => {
+      if (file.size > maxBytes) return
+      const reader = new FileReader()
+      reader.onload = () => {
+        setAttachedImages((prev) => {
+          if (prev.length >= MAX_IMAGES) return prev
+          return [...prev, reader.result]
+        })
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
+  const removeImage = (index) => {
+    setAttachedImages((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    const files = []
+    for (const item of items) {
+      if (item.type.startsWith('image/')) files.push(item.getAsFile())
+    }
+    if (files.length) {
+      e.preventDefault()
+      addImages(files)
+    }
+  }
+
   const handleSend = async (text = input.trim()) => {
-    if (!text) return
+    const hasImages = attachedImages.length > 0
+    if (!text && !hasImages) return
+    const messageText = text.trim()
     setInput('')
-    onSendMessage('user', text)
+    const imagesToSend = [...attachedImages]
+    setAttachedImages([])
+    onSendMessage('user', messageText, imagesToSend.length ? imagesToSend : null)
     setLoading(true)
     try {
-      const { reply } = await sendMessage(text, sport, messages)
+      const { reply } = await sendMessage(messageText, sport, messages, imagesToSend)
       onSendMessage('bot', reply.replace(/\\n/g, '\n'))
     } catch (e) {
       onSendMessage('bot', `Error: ${e.message || 'Could not reach the API'}. Make sure the backend is running (port 5000) and you opened the app via npm run dev (e.g. http://localhost:3000 or 3001).`)
@@ -178,7 +224,7 @@ export default function ChatPanel({
             </motion.div>
           )}
           {messages.map((msg, i) => (
-            <MessageBubble key={i} sender={msg.sender} text={msg.text} index={i} />
+            <MessageBubble key={i} sender={msg.sender} text={msg.text} images={msg.images} index={i} />
           ))}
           {loading && (
             <motion.div
@@ -199,25 +245,73 @@ export default function ChatPanel({
 
       <div className="input-wrap">
         <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
-          placeholder={`Ask about ${sportLabel} odds or matchups…`}
-          disabled={loading}
-          aria-label="Message"
+          ref={fileInputRef}
+          type="file"
+          accept={ACCEPT_IMAGES}
+          multiple
+          className="input-file-hidden"
+          aria-hidden
+          onChange={(e) => {
+            addImages(e.target.files)
+            e.target.value = ''
+          }}
         />
-        <motion.button
-          type="button"
-          className="send-btn"
-          onClick={() => handleSend()}
-          disabled={!input.trim() || loading}
-          whileHover={{ scale: 1.03 }}
-          whileTap={{ scale: 0.97 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-        >
-          Send
-        </motion.button>
+        {attachedImages.length > 0 && (
+          <div className="image-previews">
+            {attachedImages.map((dataUrl, i) => (
+              <motion.div
+                key={i}
+                className="image-preview-wrap"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+              >
+                <img src={dataUrl} alt="" className="image-preview" />
+                <button
+                  type="button"
+                  className="image-preview-remove"
+                  onClick={() => removeImage(i)}
+                  aria-label="Remove image"
+                >
+                  ×
+                </button>
+              </motion.div>
+            ))}
+          </div>
+        )}
+        <div className="input-row">
+          <button
+            type="button"
+            className="attach-image-btn"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || attachedImages.length >= MAX_IMAGES}
+            title={attachedImages.length >= MAX_IMAGES ? 'Max 5 images' : 'Add image'}
+            aria-label="Add image"
+          >
+            📷
+          </button>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
+            onPaste={handlePaste}
+            placeholder={attachedImages.length ? 'Ask about this image…' : `Ask about ${sportLabel} odds or matchups…`}
+            disabled={loading}
+            aria-label="Message"
+          />
+          <motion.button
+            type="button"
+            className="send-btn"
+            onClick={() => handleSend()}
+            disabled={(!input.trim() && !attachedImages.length) || loading}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 20 }}
+          >
+            Send
+          </motion.button>
+        </div>
       </div>
     </motion.div>
   )

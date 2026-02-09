@@ -33,10 +33,10 @@ async function request(path, options = {}, requireAuth = false) {
   return res.json();
 }
 
-export async function sendMessage(message, sport, messages = []) {
+export async function sendMessage(message, sport, messages = [], images = []) {
   return request('/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, sport, messages }),
+    body: JSON.stringify({ message, sport, messages, images }),
   });
 }
 

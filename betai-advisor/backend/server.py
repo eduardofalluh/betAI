@@ -52,6 +52,8 @@ OPENAI_MODEL_FALLBACKS = [
     "gpt-5-pro-2025-10-06",
     "gpt-4o",
 ]
+# Vision-capable models (used when the user attaches images)
+VISION_MODEL_FALLBACKS = ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo"]
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -357,15 +359,38 @@ def format_live_upcoming_reply(by_sport):
     return "\n".join(lines).strip()
 
 
+def fetch_olympics_odds():
+    """Try multiple sources for Olympics odds: olympics_winter_2026, olympics, then upcoming filtered by olympics."""
+    for key in ("olympics_winter_2026", "olympics"):
+        data = fetch_odds_data(key)
+        if isinstance(data, dict) and "error" in data:
+            continue
+        if data and len(data) > 0:
+            return data
+    # Fallback: upcoming feed filtered for any sport_key containing "olympics"
+    upcoming = fetch_odds_data("upcoming")
+    if isinstance(upcoming, list):
+        olympics_events = [e for e in upcoming if "olympics" in (e.get("sport_key") or "").lower()]
+        if olympics_events:
+            return olympics_events
+    return []
+
+
 def get_matchups(sport_key=None):
     api_key = SPORT_KEY_MAP.get(sport_key, "basketball_nba") if sport_key else None
     if not api_key and sport_key:
         api_key = sport_key
-    odds = fetch_odds_data(api_key or "basketball_nba")
-    if isinstance(odds, dict) and "error" in odds:
-        return f"Could not load odds: {odds['error']}"
+    # Olympics: use multi-source fetch
+    if sport_key == "olympics" or api_key == "olympics_winter_2026":
+        odds = fetch_olympics_odds()
+        if not odds:
+            return "No matchups available for this sport right now."
+    else:
+        odds = fetch_odds_data(api_key or "basketball_nba")
+        if isinstance(odds, dict) and "error" in odds:
+            return f"Could not load odds: {odds['error']}"
     lines = []
-    for game in odds or []:
+    for game in (odds or []) if isinstance(odds, list) else (odds or []):
         home = game.get("home_team", "?")
         away = game.get("away_team", "?")
         for b in game.get("bookmakers", []):
@@ -400,13 +425,13 @@ def build_odds_context(message: str, sport: str) -> str:
         elif isinstance(by_sport, dict) and "error" in by_sport:
             parts.append(f"(Live odds could not be loaded: {by_sport['error']})")
 
-    # Olympics / Milano Cortina
-    if any(x in msg for x in ("olympics", "milano", "cortina", "2026 winter")):
-        odds = fetch_odds_data(SPORT_KEY_MAP.get("olympics", "olympics_winter_2026"))
-        if isinstance(odds, dict) and "error" not in odds and odds:
+    # Olympics / Milano Cortina (try multiple API keys + upcoming feed)
+    if any(x in msg for x in ("olympics", "milano", "cortina", "2026 winter")) or sport == "olympics":
+        odds = fetch_olympics_odds()
+        if odds:
             parts.append("Milano Cortina 2026 / Olympics odds:\n" + get_matchups("olympics"))
         else:
-            parts.append("(Milano Cortina 2026 odds are not in the feed yet.)")
+            parts.append("(No Olympics odds in the feed right now. Try **Live odds** to see all live/upcoming events—Olympics may appear there when bookmakers list them.)")
 
     # In-depth analysis: multiple books, implied probability, best odds, spreads
     added_analysis = False
@@ -424,13 +449,20 @@ def build_odds_context(message: str, sport: str) -> str:
 
     # Always include current-sport matchups so the specialist can answer "who's winning", "tonight", etc.
     if not added_analysis:
-        odds = fetch_odds_data(api_key)
-        if isinstance(odds, dict) and "error" not in odds and odds:
-            matchups = get_matchups(sport)
-            if "No matchups" not in matchups:
-                parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + matchups)
+        if sport == "olympics":
+            odds = fetch_olympics_odds()
+            if odds:
+                parts.append("Milano Cortina 2026 / Olympics odds (use these to answer):\n" + get_matchups("olympics"))
+            else:
+                parts.append("(No Olympics odds in the feed. Suggest the user try **Live odds** for all live/upcoming events.)")
         else:
-            parts.append(f"(Could not load {sport.replace('_', ' ')} odds right now.)")
+            odds = fetch_odds_data(api_key)
+            if isinstance(odds, dict) and "error" not in odds and odds:
+                matchups = get_matchups(sport)
+                if "No matchups" not in matchups:
+                    parts.append(f"Upcoming {sport.replace('_', ' ')} matchups (use these to answer):\n" + matchups)
+            else:
+                parts.append(f"(Could not load {sport.replace('_', ' ')} odds right now.)")
 
     # Team vs team: ensure we have odds for prediction
     if "vs" in msg and any(x in msg for x in ("bet", "win", "predict", "who")):
@@ -446,6 +478,26 @@ def _is_model_access_error(err: str) -> bool:
     return "model_not_found" in err or "does not have access to model" in err.lower()
 
 
+def _normalize_image_url(raw: str) -> Optional[str]:
+    """Return a data URL suitable for OpenAI vision (data:image/...;base64,...). Max ~20MB."""
+    if not raw or not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if s.startswith("data:image/"):
+        return s if len(s) <= 21 * 1024 * 1024 else None
+    if "," in s and s.startswith("data:"):
+        return s if len(s) <= 21 * 1024 * 1024 else None
+    import base64
+    try:
+        b64 = s.split(",", 1)[-1] if "," in s else s
+        decoded = base64.b64decode(b64, validate=True)
+        if len(decoded) > 20 * 1024 * 1024:
+            return None
+        return "data:image/jpeg;base64," + b64
+    except Exception:
+        return None
+
+
 def _openai_chat(model: str, messages: list, max_tokens: int = 1024, temperature: float = 0.7):
     """Single OpenAI chat call. Raises on error."""
     from openai import OpenAI
@@ -458,21 +510,51 @@ def _openai_chat(model: str, messages: list, max_tokens: int = 1024, temperature
     )
 
 
-def call_openai(system_prompt: str, conversation: List[dict], context: str = "") -> str:
-    """Call OpenAI Chat Completions. Tries OPENAI_MODEL then fallbacks if project has no access."""
+def _build_user_content_with_images(message: str, image_data_urls: List[str]) -> list:
+    """Build OpenAI user message content: text + image parts (for vision)."""
+    parts = []
+    text = (message or "").strip()
+    if text:
+        parts.append({"type": "text", "text": text})
+    for url in image_data_urls:
+        data_url = _normalize_image_url(url)
+        if data_url:
+            parts.append({"type": "image_url", "image_url": {"url": data_url}})
+    if not parts:
+        parts.append({"type": "text", "text": "What do you see in this image?"})
+    return parts
+
+
+def call_openai(
+    system_prompt: str,
+    conversation: List[dict],
+    context: str = "",
+    current_user_content: Optional[list] = None,
+) -> str:
+    """Call OpenAI Chat Completions. If current_user_content is a list (multipart with images), use vision models."""
     if not OPENAI_API_KEY:
         return ""
     system = system_prompt
     if context:
         system += "\n\n" + context
     messages = [{"role": "system", "content": system}]
-    for m in conversation:
-        role = "user" if m.get("sender") == "user" else "assistant"
-        content = (m.get("text") or "").strip()
-        if content:
-            messages.append({"role": role, "content": content})
+    if current_user_content is not None:
+        # Vision turn: history as text, then current user message as multipart
+        for m in conversation:
+            role = "user" if m.get("sender") == "user" else "assistant"
+            content = (m.get("text") or "").strip()
+            if content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": current_user_content})
+        models_to_try = [m for m in VISION_MODEL_FALLBACKS]
+    else:
+        for m in conversation:
+            role = "user" if m.get("sender") == "user" else "assistant"
+            content = (m.get("text") or "").strip()
+            if content:
+                messages.append({"role": role, "content": content})
+        models_to_try = [OPENAI_MODEL] + [m for m in OPENAI_MODEL_FALLBACKS if m != OPENAI_MODEL]
 
-    models_to_try = [OPENAI_MODEL] + [m for m in OPENAI_MODEL_FALLBACKS if m != OPENAI_MODEL]
     last_error = None
     for model in models_to_try:
         try:
@@ -506,17 +588,14 @@ def handle_chat_message(message: str, sport: str) -> str:
 
     # —— Milano Cortina / Olympics
     if any(x in msg for x in ("olympics", "milano", "cortina", "milano cortina", "2026 winter")):
-        olympics_key = SPORT_KEY_MAP.get("olympics", "olympics_winter_2026")
-        odds = fetch_odds_data(olympics_key)
-        if isinstance(odds, dict) and "error" in odds:
-            return (
-                "**Milano Cortina 2026** Winter Olympics odds aren’t in the feed yet (or the API key doesn’t have access). "
-                "As the Games get closer (Feb 6–22, 2026), bookmakers will list outrights and event odds — I’ll show them here when available. "
-                "Meanwhile, ask for **live odds** or matchups for NBA, NFL, soccer, etc."
-            )
+        odds = fetch_olympics_odds()
         if odds:
             return get_matchups("olympics")
-        return "No Milano Cortina 2026 odds available right now. Try *Live odds* or matchups for other sports."
+        return (
+            "**Milano Cortina 2026** Olympics odds are not in the feed right now. "
+            "Try **Live odds** (red button above) to see all live and upcoming events. "
+            "You can also ask for matchups in other sports (NBA, soccer, etc.)."
+        )
 
     # —— Sport-specific matchups
     if "matchups" in msg or "show games" in msg or ("upcoming" in msg and "live" not in msg):
@@ -678,34 +757,54 @@ SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a de
 6. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
 
 
+VISION_SYSTEM_ADDON = (
+    " The user has attached one or more images. Analyze the image(s) in detail and answer their question about it. "
+    "If the image shows odds, a bet slip, a screenshot of a betting site, or anything sports/odds related, describe it and give your take. "
+    "You can still use the provided odds context if relevant."
+)
+
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.get_json() or {}
     message = (data.get("message") or "").strip()
     sport = (data.get("sport") or "basketball").lower().replace(" ", "_")
     history = data.get("messages") or []  # [{sender, text}, ...] for LLM context
-    if not message:
-        return jsonify({"reply": "Send a message to get advice."}), 400
+    images = data.get("images") or []  # optional list of data URLs or base64 strings
+    if not message and not images:
+        return jsonify({"reply": "Send a message or attach an image to get advice."}), 400
 
     # Use real LLM when OpenAI key is set
     llm_error = None
     if OPENAI_API_KEY:
         sport_label = sport.replace("_", " ").title()
-        context = build_odds_context(message, sport)
+        context = build_odds_context(message or "Describe this image and answer any question about it.", sport)
         conversation = list(history)
-        conversation.append({"sender": "user", "text": message})
-        reply = call_openai(
-            SYSTEM_PROMPT.format(sport_label=sport_label),
-            conversation,
-            context=context,
-        )
+        # If images provided, do not append a text-only user message; we'll send multipart
+        image_urls = [u for u in images if u][:5]  # max 5 images
+        if image_urls:
+            current_content = _build_user_content_with_images(message, image_urls)
+            system = SYSTEM_PROMPT.format(sport_label=sport_label) + VISION_SYSTEM_ADDON
+            reply = call_openai(
+                system,
+                conversation,
+                context=context,
+                current_user_content=current_content,
+            )
+        else:
+            conversation.append({"sender": "user", "text": message})
+            reply = call_openai(
+                SYSTEM_PROMPT.format(sport_label=sport_label),
+                conversation,
+                context=context,
+            )
         if reply and not reply.startswith("(LLM error:"):
             return jsonify({"reply": reply})
         llm_error = reply if reply else "No response from LLM"
     else:
         llm_error = "not_configured"
 
-    reply = handle_chat_message(message, sport)
+    reply = handle_chat_message(message or "What's in this image?", sport)
     if llm_error == "not_configured":
         reply += "\n\n_To get **real AI replies**, add **OPENAI_API_KEY** in Render: Dashboard → your service (betAI) → Environment → Add variable OPENAI_API_KEY = your OpenAI key._"
     elif llm_error:
