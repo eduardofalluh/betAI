@@ -67,6 +67,12 @@ ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
 ODDS_SCORES_URL = "https://api.the-odds-api.com/v4/sports/{sport_key}/scores/"
 SPORTS_API_URL = "https://api.the-odds-api.com/v4/sports/"
 
+# ESPN Fantasy Basketball (optional): league_id + year; for private leagues add ESPN_S2 and ESPN_SWID
+ESPN_LEAGUE_ID = os.getenv("ESPN_LEAGUE_ID", "").strip()
+ESPN_YEAR = int(os.getenv("ESPN_YEAR", "0") or "0")
+ESPN_S2 = os.getenv("ESPN_S2", "").strip() or None
+ESPN_SWID = os.getenv("ESPN_SWID", "").strip() or None
+
 # Frontend sport key -> Odds API key (multiple keys tried for Olympics)
 SPORT_KEY_MAP = {
     "basketball": "basketball_nba",
@@ -461,6 +467,54 @@ def get_matchups(sport_key=None):
     return "No matchups available for this sport right now."
 
 
+def fetch_espn_fantasy_basketball():
+    """
+    Fetch ESPN Fantasy Basketball free agents (and fantasy points) for the configured league.
+    Returns a string block for the LLM, or an error/setup message.
+    Requires ESPN_LEAGUE_ID and ESPN_YEAR; for private leagues also ESPN_S2 and ESPN_SWID.
+    """
+    if not ESPN_LEAGUE_ID or not ESPN_YEAR:
+        return (
+            "(ESPN Fantasy Basketball is not configured. To get **who to pick up** and **fantasy points**, "
+            "set **ESPN_LEAGUE_ID** and **ESPN_YEAR** in your backend environment. "
+            "For private leagues, also set **ESPN_S2** and **ESPN_SWID** from your browser cookies at fantasy.espn.com.)"
+        )
+    try:
+        from espn_api.basketball import League
+    except ImportError:
+        return "(ESPN Fantasy: install the espn-api package: pip install espn-api)"
+    try:
+        league = League(
+            league_id=int(ESPN_LEAGUE_ID),
+            year=ESPN_YEAR,
+            espn_s2=ESPN_S2,
+            swid=ESPN_SWID,
+        )
+        fa = league.free_agents(size=40)
+    except Exception as e:
+        return f"(Could not load ESPN Fantasy free agents: {e!s}. Check ESPN_LEAGUE_ID, ESPN_YEAR, and for private leagues ESPN_S2 and ESPN_SWID.)"
+    if not fa:
+        return "ESPN Fantasy Basketball: No free agents returned for your league (check league ID and year)."
+    lines = ["ESPN Fantasy Basketball — top free agents (name, position, team, avg pts, total pts, projected avg):"]
+    for p in fa[:25]:
+        name = getattr(p, "name", "?")
+        pos = getattr(p, "position", "?")
+        team = getattr(p, "proTeam", "?")
+        avg = getattr(p, "avg_points", None)
+        total = getattr(p, "total_points", None)
+        proj_avg = getattr(p, "projected_avg_points", None)
+        inj = getattr(p, "injuryStatus", None) or ""
+        if inj:
+            inj = f" [{inj}]"
+        pts_str = f"avg {avg}" if avg is not None else ""
+        if total is not None:
+            pts_str += f", total {total}" if pts_str else f"total {total}"
+        if proj_avg is not None:
+            pts_str += f", proj avg {proj_avg}" if pts_str else f"proj avg {proj_avg}"
+        lines.append(f"  • {name} ({pos}) — {team}{inj}: {pts_str}")
+    return "\n".join(lines)
+
+
 def build_odds_context(message: str, sport: str) -> str:
     """Fetch relevant odds/live data. Always include current-sport matchups so the specialist can answer."""
     msg = message.lower().strip()
@@ -481,6 +535,16 @@ def build_odds_context(message: str, sport: str) -> str:
             parts.append("\n".join(lines))
         elif isinstance(by_sport, dict) and "error" in by_sport:
             parts.append(f"(Live odds could not be loaded: {by_sport['error']})")
+
+    # ESPN Fantasy Basketball: who to pick up, is X a good pickup, free agents
+    fantasy_triggers = (
+        "pick up", "pickup", "free agent", "add player", "waiver",
+        "who should i pick", "who to pick up", "good pickup", "fantasy basketball",
+        "fantasy points", "who to add", "should i add", "drop and add",
+    )
+    if sport == "basketball" and any(t in msg for t in fantasy_triggers):
+        espn_block = fetch_espn_fantasy_basketball()
+        parts.append(espn_block)
 
     # Olympics / Milano Cortina (try multiple API keys + upcoming feed)
     if any(x in msg for x in ("olympics", "milano", "cortina", "2026 winter")) or sport == "olympics":
@@ -824,7 +888,8 @@ SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a de
 3. Be concise and concrete. Use **bold** for team names and odds. For "who's winning tonight", "upcoming games", or "what do you think", list the actual matchups and favorites from the data with odds.
 4. For analysis/value/best bet requests: use implied %, best odds by book, and spreads when given; end with **Possible bets**: 1–3 concrete picks (e.g. "Lakers ML @ 2.10 at DraftKings") with one-line reasoning.
 5. You are the {sport_label} expert: frame answers in terms of this sport (e.g. NBA, Champions League, NFL) and its upcoming games. Do not give generic "I can help with…" replies when odds are provided—give a direct answer using the numbers.
-6. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
+6. When "ESPN Fantasy Basketball" data is provided (free agents with avg pts, total pts, projected avg): use it to answer "who should I pick up", "is [player] a good pickup", "who to add". Recommend 1–3 specific players from the list with a one-line reason; if the user asks about a named player, say whether they appear in the free agents list and whether they look like a good add based on the stats.
+7. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
 
 
 VISION_SYSTEM_ADDON = (

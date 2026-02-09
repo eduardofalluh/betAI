@@ -6,3 +6,4 @@ openai>=1.0.0
 cryptography>=42.0.0
 gunicorn>=21.0.0
 PyJWT>=2.8.0
+espn-api>=0.45.0

@@ -588,9 +588,18 @@
   cursor: pointer;
   text-align: center;
   width: 100%;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: 1.4;
 }
 .auth-switch:hover {
   text-decoration: underline;
+}
+.auth-switch-short {
+  display: none;
+}
+.auth-switch-full {
+  display: inline;
 }
 
 /* ─── Messages ─── */
@@ -1069,15 +1078,23 @@
     max-height: calc(100vh - 2 * max(12px, env(safe-area-inset-top)));
     max-height: calc(100dvh - 2 * max(12px, env(safe-area-inset-top)));
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 20px;
     padding-top: max(20px, env(safe-area-inset-top));
-    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    padding-bottom: max(28px, env(safe-area-inset-bottom));
     padding-left: max(20px, env(safe-area-inset-left));
     padding-right: max(20px, env(safe-area-inset-right));
     -webkit-overflow-scrolling: touch;
   }
   .auth-modal-header h2 {
     font-size: 1.2rem;
+  }
+  .auth-hint {
+    margin-bottom: 14px;
+    font-size: 0.85rem;
+  }
+  .auth-form {
+    gap: 10px;
   }
   .auth-close {
     min-width: 44px;
@@ -1094,6 +1111,13 @@
   .auth-switch {
     min-height: 44px;
     padding: 12px 0;
+    font-size: 0.8125rem;
+  }
+  .auth-switch-full {
+    display: none;
+  }
+  .auth-switch-short {
+    display: inline;
   }
   /* Log in button first on mobile so it's always visible */
   .chat-header-actions .btn-auth {

@@ -100,7 +100,8 @@ export default function AuthModal({ isOpen, onClose }) {
           className="auth-switch"
           onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }}
         >
-          {mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}
+          <span className="auth-switch-full">{mode === 'login' ? "Don't have an account? Sign up" : 'Already have an account? Log in'}</span>
+          <span className="auth-switch-short">{mode === 'login' ? 'Need an account? Sign up' : 'Have an account? Log in'}</span>
         </button>
       </motion.div>
     </AnimatePresence>
