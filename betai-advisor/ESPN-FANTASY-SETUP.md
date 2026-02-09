@@ -13,9 +13,9 @@ The app uses the **espn-api** Python package and your league’s **free agents**
 
 1. Go to **https://fantasy.espn.com/basketball** and open your league.
 2. The URL looks like:  
-   `https://fantasy.espn.com/basketball/team?leagueId=**123456**&seasonId=**2025**`
-3. **League ID** = `leagueId` (e.g. `123456`).  
-   **Year** = `seasonId` (e.g. `2025`).
+   `https://fantasy.espn.com/basketball/team?leagueId=**469892829**&seasonId=**2026**`
+3. **League ID** = `leagueId` (e.g. `469892829`).  
+   **Year** = `seasonId` (e.g. `2026`).
 
 ---
 
@@ -25,8 +25,8 @@ Add to your backend environment (e.g. Render → Service → Environment):
 
 | Variable        | Example  | Required |
 |----------------|----------|----------|
-| **ESPN_LEAGUE_ID** | `123456` | Yes      |
-| **ESPN_YEAR**      | `2025`   | Yes      |
+| **ESPN_LEAGUE_ID** | `469892829` | Yes      |
+| **ESPN_YEAR**      | `2026`     | Yes      |
 | **ESPN_S2**        | *(long string)* | Only for **private** leagues |
 | **ESPN_SWID**      | `{...}`  | Only for **private** leagues |
 
