@@ -1,4 +1,5 @@
-const API = import.meta.env.VITE_API_URL || '/api';
+// Production: your Render backend. Local dev: /api (Vite proxy to localhost:5000)
+const API = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? '/api' : 'https://betai-u72d.onrender.com');
 
 async function request(path, options = {}) {
   const url = path.startsWith('http') ? path : `${API}${path}`;

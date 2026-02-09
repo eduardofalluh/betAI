@@ -1,0 +1,16 @@
+# Backend API — deploy at https://dashboard.render.com (connect this repo)
+# Then deploy the frontend (Vercel/Netlify) with VITE_API_URL = your Render URL
+services:
+  - type: web
+    name: betai-advisor-api
+    runtime: python
+    rootDir: betai-advisor/backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 -b 0.0.0.0:$PORT server:app
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ODDS_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: 3.11.0

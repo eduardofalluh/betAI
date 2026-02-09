@@ -38,7 +38,7 @@ export default function ChatPanel({
       const { reply } = await sendMessage(text, sport, messages)
       onSendMessage('bot', reply.replace(/\\n/g, '\n'))
     } catch (e) {
-      onSendMessage('bot', `Error: ${e.message}. Is the backend running on port 5000?`)
+      onSendMessage('bot', `Error: ${e.message || 'Could not reach the API'}. Make sure the backend is running (port 5000) and you opened the app via npm run dev (e.g. http://localhost:3000 or 3001).`)
     } finally {
       setLoading(false)
     }

@@ -1,0 +1,11 @@
+# Netlify build for BetAI Advisor frontend (lives in betai-advisor/)
+[build]
+  base = "betai-advisor"
+  command = "npm run build"
+  publish = "dist"
+
+# SPA: serve index.html for all routes so client-side routing works
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

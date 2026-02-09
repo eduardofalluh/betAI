@@ -6,6 +6,8 @@ AI betting advisor with **chats documented per sport** (Basketball, Soccer, Amer
 
 - **`betai-advisor/`** — App (Vite + React frontend, Flask backend)
 
+**Deploy to the cloud (no local backend):** see **[betai-advisor/DEPLOY.md](betai-advisor/DEPLOY.md)** — backend on Render, frontend on Vercel.
+
 ## BetAI Advisor – Quick start
 
 ### 1. Backend (Python)
