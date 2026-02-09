@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -37,9 +38,7 @@ export default function AuthModal({ isOpen, onClose }) {
     }
   }
 
-  if (!isOpen) return null
-
-  return (
+  const modalContent = (
     <AnimatePresence>
       <motion.div
         className="auth-backdrop"
@@ -51,6 +50,7 @@ export default function AuthModal({ isOpen, onClose }) {
       <motion.div
         className="auth-modal"
         role="dialog"
+        aria-modal="true"
         aria-labelledby="auth-title"
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -106,4 +106,8 @@ export default function AuthModal({ isOpen, onClose }) {
       </motion.div>
     </AnimatePresence>
   )
+
+  if (!isOpen) return null
+
+  return createPortal(modalContent, document.body)
 }
