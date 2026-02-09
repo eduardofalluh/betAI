@@ -32,7 +32,15 @@ def _load_openai_key() -> str:
     return ""
 
 OPENAI_API_KEY = _load_openai_key()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "").strip() or "gpt-3.5-turbo"
+# Try these in order when the project doesn't have access to the default model
+OPENAI_MODEL_FALLBACKS = [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-4",
+    "gpt-3.5-turbo",
+]
 
 # Paths
 BASE_DIR = Path(__file__).resolve().parent
@@ -281,8 +289,24 @@ def build_odds_context(message: str, sport: str) -> str:
     return "Current odds data (use this when answering):\n" + "\n\n".join(parts)
 
 
+def _is_model_access_error(err: str) -> bool:
+    return "model_not_found" in err or "does not have access to model" in err.lower()
+
+
+def _openai_chat(model: str, messages: list, max_tokens: int = 1024, temperature: float = 0.7):
+    """Single OpenAI chat call. Raises on error."""
+    from openai import OpenAI
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    return client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
 def call_openai(system_prompt: str, conversation: List[dict], context: str = "") -> str:
-    """Call OpenAI Chat Completions. conversation is list of {role, content} (user/assistant)."""
+    """Call OpenAI Chat Completions. Tries OPENAI_MODEL then fallbacks if project has no access."""
     if not OPENAI_API_KEY:
         return ""
     system = system_prompt
@@ -294,22 +318,24 @@ def call_openai(system_prompt: str, conversation: List[dict], context: str = "")
         content = (m.get("text") or "").strip()
         if content:
             messages.append({"role": role, "content": content})
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        r = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.7,
-        )
-        if r.choices and len(r.choices) > 0:
-            return (r.choices[0].message.content or "").strip()
-    except Exception as e:
-        err = str(e)
-        if "403" in err or "Project" in err or "billing" in err.lower():
-            return "(LLM error: 403 - Your BetAI project has $0 billing. Add payment to that project at platform.openai.com (Billing), or create an API key in the project that has your $10 (e.g. Default) and set OPENAI_API_KEY on Render to that key. See OPENAI-BILLING-FIX.md.)"
-        return f"(LLM error: {e!s})"
+
+    models_to_try = [OPENAI_MODEL] + [m for m in OPENAI_MODEL_FALLBACKS if m != OPENAI_MODEL]
+    last_error = None
+    for model in models_to_try:
+        try:
+            r = _openai_chat(model, messages)
+            if r.choices and len(r.choices) > 0:
+                return (r.choices[0].message.content or "").strip()
+        except Exception as e:
+            err = str(e)
+            last_error = err
+            if "403" in err and ("Project" in err or "billing" in err.lower()) and not _is_model_access_error(err):
+                return "(LLM error: 403 - Your BetAI project has $0 billing. Add payment to that project at platform.openai.com (Billing), or create an API key in the project that has your $10 (e.g. Default) and set OPENAI_API_KEY on Render to that key. See OPENAI-BILLING-FIX.md.)"
+            if _is_model_access_error(err):
+                continue  # try next model
+            return f"(LLM error: {e!s})"
+    if last_error:
+        return f"(LLM error: No model available for this project. Last error: {last_error[:120]}… — Try setting OPENAI_MODEL on Render to a model your project can use; see platform.openai.com/docs/models.)"
     return ""
 
 
@@ -488,23 +514,31 @@ def status():
 
 @app.route("/llm-check", methods=["GET"])
 def llm_check():
-    """Try one OpenAI call and return success or the exact error (for debugging 403)."""
+    """Try one OpenAI call; on model_not_found try fallback models."""
     if not OPENAI_API_KEY:
         return jsonify({"ok": False, "error": "OPENAI_API_KEY not set on Render"}), 200
-    try:
-        from openai import OpenAI
-        client = OpenAI(api_key=OPENAI_API_KEY)
-        r = client.chat.completions.create(
-            model=OPENAI_MODEL,
-            messages=[{"role": "user", "content": "Say OK"}],
-            max_tokens=10,
-        )
-        if r.choices and r.choices[0].message.content:
-            return jsonify({"ok": True, "message": "LLM is working"}), 200
-        return jsonify({"ok": False, "error": "Empty response from OpenAI"}), 200
-    except Exception as e:
-        err = str(e)
-        return jsonify({"ok": False, "error": err}), 200
+    models_to_try = [OPENAI_MODEL] + [m for m in OPENAI_MODEL_FALLBACKS if m != OPENAI_MODEL]
+    last_error = None
+    for model in models_to_try:
+        try:
+            r = _openai_chat(model, [{"role": "user", "content": "Say OK"}], max_tokens=10)
+            if r.choices and r.choices[0].message.content:
+                return jsonify({
+                    "ok": True,
+                    "message": "LLM is working",
+                    "model": model,
+                }), 200
+        except Exception as e:
+            err = str(e)
+            last_error = err
+            if _is_model_access_error(err):
+                continue
+            return jsonify({"ok": False, "error": err}), 200
+    return jsonify({
+        "ok": False,
+        "error": last_error or "No response",
+        "hint": "Your project has no access to the tried models. Set OPENAI_MODEL on Render to a model your project can use (see platform.openai.com/docs/models).",
+    }), 200
 
 
 if __name__ == "__main__":
