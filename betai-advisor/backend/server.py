@@ -478,24 +478,41 @@ def fetch_espn_fantasy_basketball():
     """
     if not ESPN_LEAGUE_ID or not ESPN_YEAR:
         return (
-            "(ESPN Fantasy Basketball is not configured. To get **who to pick up** and **fantasy points**, "
-            "set **ESPN_LEAGUE_ID** and **ESPN_YEAR** in your backend environment. "
-            "For private leagues, also set **ESPN_S2** and **ESPN_SWID** from your browser cookies at fantasy.espn.com.)"
+            "(ESPN Fantasy Basketball is not configured. In **Render** → your backend service → **Environment**, "
+            "add **ESPN_LEAGUE_ID** and **ESPN_YEAR**, then save and wait for redeploy. "
+            "For private leagues, also add **ESPN_S2** and **ESPN_SWID** from your browser cookies at fantasy.espn.com. See ESPN-FANTASY-SETUP.md.)"
         )
     try:
         from espn_api.basketball import League
     except ImportError:
         return "(ESPN Fantasy: install the espn-api package: pip install espn-api)"
-    try:
-        league = League(
-            league_id=int(ESPN_LEAGUE_ID),
-            year=ESPN_YEAR,
-            espn_s2=ESPN_S2,
-            swid=ESPN_SWID,
-        )
-        fa = league.free_agents(size=40)
-    except Exception as e:
-        return f"(Could not load ESPN Fantasy free agents: {e!s}. Check ESPN_LEAGUE_ID, ESPN_YEAR, and for private leagues ESPN_S2 and ESPN_SWID.)"
+    fa = None
+    err_msg = None
+    for year_try in [ESPN_YEAR, ESPN_YEAR - 1]:
+        if year_try < 2019:
+            continue
+        try:
+            league = League(
+                league_id=int(ESPN_LEAGUE_ID),
+                year=year_try,
+                espn_s2=ESPN_S2,
+                swid=ESPN_SWID,
+            )
+            fa = league.free_agents(size=40)
+            err_msg = None
+            break
+        except Exception as e:
+            err_msg = e
+            print(f"[ESPN] free_agents year={year_try} failed: {e!r}", flush=True)
+            if year_try == ESPN_YEAR and ESPN_YEAR != ESPN_YEAR - 1:
+                continue
+            break
+    if err_msg is not None:
+        e = err_msg
+        hint = " If your league is **private**, add **ESPN_S2** and **ESPN_SWID** from fantasy.espn.com cookies (see ESPN-FANTASY-SETUP.md)."
+        if "login" in str(e).lower() or "auth" in str(e).lower() or "401" in str(e) or "unauthorized" in str(e).lower():
+            hint = " Your league is likely **private**. Add **ESPN_S2** and **ESPN_SWID** from your browser cookies at fantasy.espn.com (see ESPN-FANTASY-SETUP.md)."
+        return f"(Could not load ESPN Fantasy free agents: {e!s}. Check ESPN_LEAGUE_ID and ESPN_YEAR on Render → Environment and redeploy.{hint})"
     if not fa:
         return "ESPN Fantasy Basketball: No free agents returned for your league (check league ID and year)."
     lines = ["ESPN Fantasy Basketball — top free agents (name, position, team, avg pts, total pts, projected avg):"]
@@ -602,6 +619,7 @@ def build_odds_context(message: str, sport: str) -> str:
         "fantasy points", "who to add", "should i add", "drop and add",
         "recommend", "recommendation", "player names", "give me names", "suggest",
         "past season", "last year", "last season", "standings", "how did i do", "league history",
+        "fantasy draft", "draft advice", "who to draft",
     )
     if sport == "basketball" and any(t in msg for t in fantasy_triggers):
         espn_block = fetch_espn_fantasy_basketball()
@@ -953,8 +971,9 @@ SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a de
 4. For analysis/value/best bet requests: use implied %, best odds by book, and spreads when given; end with **Possible bets**: 1–3 concrete picks (e.g. "Lakers ML @ 2.10 at DraftKings") with one-line reasoning.
 5. You are the {sport_label} expert: frame answers in terms of this sport (e.g. NBA, Champions League, NFL) and its upcoming games. Do not give generic "I can help with…" replies when odds are provided—give a direct answer using the numbers.
 6. When "ESPN Fantasy Basketball" data is provided (free agents with avg pts, total pts, projected avg): use it to answer "who should I pick up", "is [player] a good pickup", "who to add". Recommend 1–3 specific players from the list with a one-line reason; if the user asks about a named player, say whether they appear in the free agents list and whether they look like a good add based on the stats.
-7. When "ESPN Fantasy Basketball — [year] season (general stats)" is provided (standings, top scorers): use it to answer "how did my league do", "last year standings", "past season", "who were the top scorers". Reference actual team names and player names from the data.
-8. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
+7. When the ESPN block says "(ESPN Fantasy Basketball is not configured" or "(Could not load ESPN Fantasy": tell the user exactly what to do—add ESPN_LEAGUE_ID and ESPN_YEAR in Render → Environment and redeploy; if their league is private, add ESPN_S2 and ESPN_SWID from fantasy.espn.com cookies. Do not say "no available data" without giving the fix.
+8. When "ESPN Fantasy Basketball — [year] season (general stats)" is provided (standings, top scorers): use it to answer "how did my league do", "last year standings", "past season", "who were the top scorers". Reference actual team names and player names from the data.
+9. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
 
 
 VISION_SYSTEM_ADDON = (
@@ -1029,6 +1048,28 @@ def status():
         "llm_configured": bool(OPENAI_API_KEY),
         "odds_configured": bool(ODDS_API_KEY and ODDS_API_KEY != "YOUR_ODDS_API_KEY_HERE"),
     })
+
+
+@app.route("/espn-status", methods=["GET"])
+def espn_status():
+    """Check if ESPN Fantasy Basketball data is reachable. Use this to verify league ID, year, and cookies."""
+    configured = bool(ESPN_LEAGUE_ID and ESPN_YEAR)
+    if not configured:
+        return jsonify({
+            "configured": False,
+            "ok": False,
+            "error": "ESPN_LEAGUE_ID or ESPN_YEAR not set. Add them in Render → Environment and redeploy.",
+        }), 200
+    block = fetch_espn_fantasy_basketball()
+    # Success = we got a block that looks like real data (starts with "ESPN Fantasy Basketball —" and has player lines)
+    ok = block.startswith("ESPN Fantasy Basketball — top free agents") and "•" in block
+    preview = (block[:800] + "…") if len(block) > 800 else block if ok else None
+    return jsonify({
+        "configured": True,
+        "ok": ok,
+        "preview": preview,
+        "error": None if ok else block,
+    }), 200
 
 
 @app.route("/llm-check", methods=["GET"])
