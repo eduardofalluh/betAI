@@ -18,7 +18,8 @@ function getStoredTheme() {
 
 const SPORTS = [
   { key: 'basketball', label: 'Basketball', icon: '🏀' },
-  { key: 'soccer', label: 'Soccer', icon: '⚽' },
+  { key: 'soccer', label: 'Soccer (Champions League)', icon: '⚽' },
+  { key: 'soccer_premier_league', label: 'Premier League', icon: '⚽' },
   { key: 'american_football', label: 'American Football', icon: '🏈' },
   { key: 'baseball', label: 'Baseball', icon: '⚾' },
   { key: 'hockey', label: 'Hockey', icon: '🏒' },

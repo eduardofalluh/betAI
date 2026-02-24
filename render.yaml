@@ -14,3 +14,5 @@ services:
         sync: false
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: JWT_SECRET
+        sync: false  # Keep secret secure - generate with: python -c "import secrets; print(secrets.token_urlsafe(32))"

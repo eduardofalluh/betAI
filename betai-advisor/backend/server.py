@@ -80,6 +80,7 @@ ESPN_PAST_YEARS = [int(y.strip()) for y in ESPN_PAST_YEARS_RAW.split(",") if y.s
 SPORT_KEY_MAP = {
     "basketball": "basketball_nba",
     "soccer": "soccer_uefa_champs_league",
+    "soccer_premier_league": "soccer_epl",  # English Premier League
     "american_football": "americanfootball_nfl",
     "baseball": "baseball_mlb",
     "hockey": "icehockey_nhl",
@@ -93,6 +94,7 @@ SPORT_KEY_MAP = {
 SPORT_TITLES = {
     "basketball_nba": "NBA",
     "soccer_uefa_champs_league": "Champions League",
+    "soccer_epl": "Premier League",  # English Premier League
     "soccer_usa_mls": "MLS",
     "americanfootball_nfl": "NFL",
     "americanfootball_ncaaf": "NCAAF",
@@ -112,6 +114,10 @@ def ensure_data_dir():
         CHATS_FILE.write_text("{}")
     if not USERS_FILE.exists():
         USERS_FILE.write_text("{}")
+
+
+# Initialize data directories on startup
+ensure_data_dir()
 
 
 def get_user_from_request() -> Optional[str]:
@@ -262,6 +268,115 @@ def fetch_all_sports():
     except Exception as e:
         return []
     return []
+
+
+# ============================================================================
+# THESPORTSDB INTEGRATION (Free API for team/player stats)
+# ============================================================================
+
+THESPORTSDB_API_URL = "https://www.thesportsdb.com/api/v1/json/3"  # Free tier (key=3)
+
+
+def fetch_team_details(team_name: str, sport: str = "Soccer") -> dict:
+    """Fetch team details from TheSportsDB (free tier, no key required)."""
+    try:
+        r = requests.get(
+            f"{THESPORTSDB_API_URL}/searchteams.php",
+            params={"t": team_name},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            teams = data.get("teams", [])
+            if teams:
+                return teams[0]
+    except Exception as e:
+        print(f"TheSportsDB team error: {e}", flush=True)
+    return {}
+
+
+def fetch_league_table(league_id: str, season: str = "2025-2026") -> list:
+    """Fetch league standings from TheSportsDB."""
+    try:
+        r = requests.get(
+            f"{THESPORTSDB_API_URL}/lookuptable.php",
+            params={"l": league_id, "s": season},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            return data.get("table", [])
+    except Exception as e:
+        print(f"TheSportsDB standings error: {e}", flush=True)
+    return []
+
+
+def fetch_recent_form(team_id: str, last_n: int = 5) -> list:
+    """Fetch recent results for a team."""
+    try:
+        r = requests.get(
+            f"{THESPORTSDB_API_URL}/eventslast.php",
+            params={"id": team_id},
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            events = data.get("results", [])
+            return events[:last_n]
+    except Exception as e:
+        print(f"TheSportsDB form error: {e}", flush=True)
+    return []
+
+
+def fetch_player_stats(player_name: str, team: str = None) -> dict:
+    """Fetch player statistics from TheSportsDB."""
+    try:
+        params = {"p": player_name}
+        if team:
+            params["t"] = team
+        r = requests.get(
+            f"{THESPORTSDB_API_URL}/searchplayers.php",
+            params=params,
+            timeout=10
+        )
+        if r.status_code == 200:
+            data = r.json()
+            players = data.get("player", [])
+            if players:
+                return players[0]
+    except Exception as e:
+        print(f"TheSportsDB player error: {e}", flush=True)
+    return {}
+
+
+def format_player_stats_for_llm(player_data: dict) -> str:
+    """Format player statistics for LLM context."""
+    if not player_data:
+        return ""
+
+    lines = [f"Player: {player_data.get('strPlayer', '?')}"]
+    if player_data.get("strPosition"):
+        lines.append(f"Position: {player_data['strPosition']}")
+    if player_data.get("strTeam"):
+        lines.append(f"Team: {player_data['strTeam']}")
+    if player_data.get("strNationality"):
+        lines.append(f"Nationality: {player_data['strNationality']}")
+
+    # Add statistics if available
+    stats = []
+    if player_data.get("intGoals"):
+        stats.append(f"{player_data['intGoals']} goals")
+    if player_data.get("intAssists"):
+        stats.append(f"{player_data['intAssists']} assists")
+    if stats:
+        lines.append(f"Stats: {', '.join(stats)}")
+
+    return "\n".join(lines)
+
+
+# ============================================================================
+# END THESPORTSDB INTEGRATION
+# ============================================================================
 
 
 def _implied_prob(decimal_odds: float) -> float:
@@ -591,6 +706,52 @@ def fetch_espn_past_seasons():
     return "\n\n".join(out)
 
 
+def analyze_fantasy_trending_players(free_agents: list) -> str:
+    """Analyze which free agents are trending up based on recent performance."""
+    if not free_agents:
+        return "No free agents available for trending analysis."
+
+    trending = []
+
+    for player in free_agents[:50]:  # Analyze top 50 free agents
+        # Calculate trend (proj_avg vs avg_points)
+        avg = getattr(player, "avg_points", None)
+        proj_avg = getattr(player, "projected_avg_points", None)
+
+        if avg and proj_avg and avg > 0 and proj_avg > avg * 1.1:  # Projected 10%+ higher
+            trend_pct = ((proj_avg - avg) / avg) * 100
+            name = getattr(player, "name", "?")
+            pos = getattr(player, "position", "?")
+            team = getattr(player, "proTeam", "?")
+            inj = getattr(player, "injuryStatus", None)
+            trending.append({
+                "name": name,
+                "position": pos,
+                "team": team,
+                "avg": avg,
+                "proj_avg": proj_avg,
+                "trend_pct": trend_pct,
+                "injury": inj
+            })
+
+    if not trending:
+        return "No clear trending players in free agency right now (no players with 10%+ projected increase)."
+
+    # Sort by trend percentage
+    trending.sort(key=lambda x: x["trend_pct"], reverse=True)
+
+    lines = ["**Trending UP in free agency** (projected to outperform recent average):"]
+    for p in trending[:10]:  # Top 10 trending players
+        inj_str = f" [{p['injury']}]" if p.get("injury") else ""
+        lines.append(
+            f"  • **{p['name']}** ({p['position']}) — {p['team']}{inj_str}: "
+            f"avg {p['avg']:.1f} → proj {p['proj_avg']:.1f} "
+            f"(+{p['trend_pct']:.1f}% ⬆️)"
+        )
+
+    return "\n".join(lines)
+
+
 def build_odds_context(message: str, sport: str) -> str:
     """Fetch relevant odds/live data. Always include current-sport matchups so the specialist can answer."""
     msg = message.lower().strip()
@@ -620,10 +781,29 @@ def build_odds_context(message: str, sport: str) -> str:
         "recommend", "recommendation", "player names", "give me names", "suggest",
         "past season", "last year", "last season", "standings", "how did i do", "league history",
         "fantasy draft", "draft advice", "who to draft",
+        "trending", "hot", "breakout", "who's hot", "whos hot", "rising",
     )
     if sport == "basketball" and any(t in msg for t in fantasy_triggers):
         espn_block = fetch_espn_fantasy_basketball()
         parts.append(espn_block)
+
+        # Add trending player analysis if we have free agents data
+        if ESPN_LEAGUE_ID and ESPN_YEAR and not espn_block.startswith("("):
+            try:
+                from espn_api.basketball import League
+                league = League(
+                    league_id=int(ESPN_LEAGUE_ID),
+                    year=ESPN_YEAR,
+                    espn_s2=ESPN_S2,
+                    swid=ESPN_SWID,
+                )
+                fa = league.free_agents(size=50)
+                if fa:
+                    trending_analysis = analyze_fantasy_trending_players(fa)
+                    parts.append(trending_analysis)
+            except Exception as e:
+                print(f"Trending analysis failed: {e}", flush=True)
+
         past_block = fetch_espn_past_seasons()
         if past_block:
             parts.append(past_block)
@@ -784,6 +964,186 @@ def call_openai(
     if last_error:
         return f"(LLM error: No model available for this project. Last error: {last_error[:120]}… — Try setting OPENAI_MODEL on Render to a model your project can use; see platform.openai.com/docs/models.)"
     return ""
+
+
+# ============================================================================
+# CONTEXTUAL MEMORY FUNCTIONS
+# ============================================================================
+
+def generate_conversation_summary(messages: List[dict], max_messages: int = 10) -> str:
+    """Generate a concise summary of conversation history when context grows large."""
+    if len(messages) <= max_messages:
+        return ""
+
+    # Summarize older messages (keep last max_messages as-is)
+    to_summarize = messages[:-max_messages]
+    if not to_summarize:
+        return ""
+
+    # Build summary prompt
+    conversation_text = "\n".join([
+        f"{m.get('sender', 'user')}: {m.get('text', '')}"
+        for m in to_summarize
+    ])
+
+    summary_messages = [
+        {
+            "role": "system",
+            "content": "Summarize this conversation history into key facts and preferences. Focus on: teams mentioned, betting preferences, analysis requests, and user context. Be concise (max 3 sentences)."
+        },
+        {
+            "role": "user",
+            "content": conversation_text
+        }
+    ]
+
+    try:
+        summary = _openai_chat(OPENAI_MODEL, summary_messages, max_tokens=200, temperature=0.3)
+        if summary.choices and len(summary.choices) > 0:
+            return summary.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"Summary generation failed: {e}", flush=True)
+
+    return ""
+
+
+def extract_chat_metadata(messages: List[dict]) -> dict:
+    """Extract key metadata from chat history for contextual memory."""
+    metadata = {
+        "teams_mentioned": set(),
+        "sports_discussed": set(),
+        "bet_types_mentioned": set(),
+    }
+
+    # Common team keywords for various sports
+    nba_teams = ["lakers", "celtics", "warriors", "heat", "bulls", "knicks", "nets", "76ers",
+                 "bucks", "raptors", "mavericks", "rockets", "spurs", "nuggets", "clippers"]
+    nfl_teams = ["patriots", "chiefs", "49ers", "cowboys", "packers", "steelers", "eagles", "rams"]
+    soccer_teams = ["liverpool", "manchester", "chelsea", "arsenal", "barcelona", "real madrid",
+                    "bayern", "psg", "juventus", "milan", "city", "united"]
+
+    bet_types = ["spread", "moneyline", "over", "under", "parlay", "prop", "futures"]
+
+    for msg in messages:
+        text = msg.get("text", "").lower()
+
+        # Extract teams
+        for team in nba_teams + nfl_teams + soccer_teams:
+            if team in text:
+                metadata["teams_mentioned"].add(team.title())
+
+        # Extract bet types
+        for bet_type in bet_types:
+            if bet_type in text:
+                metadata["bet_types_mentioned"].add(bet_type)
+
+        # Extract sports
+        if any(word in text for word in ["nba", "basketball"]):
+            metadata["sports_discussed"].add("basketball")
+        if any(word in text for word in ["nfl", "football"]):
+            metadata["sports_discussed"].add("american_football")
+        if any(word in text for word in ["soccer", "premier league", "champions league"]):
+            metadata["sports_discussed"].add("soccer")
+
+    return {k: list(v) if isinstance(v, set) else v for k, v in metadata.items()}
+
+
+def load_user_preferences(user_id: str) -> dict:
+    """Load user preferences (favorite teams, sports, betting style)."""
+    if not user_id:
+        return {}
+
+    prefs_dir = DATA_DIR / "preferences"
+    prefs_file = prefs_dir / f"{user_id}.json"
+
+    if not prefs_file.exists():
+        return {}
+
+    try:
+        return json.loads(prefs_file.read_text())
+    except (json.JSONDecodeError, FileNotFoundError):
+        return {}
+
+
+def save_user_preferences(user_id: str, preferences: dict):
+    """Save user preferences."""
+    if not user_id:
+        return
+
+    prefs_dir = DATA_DIR / "preferences"
+    prefs_dir.mkdir(exist_ok=True)
+    prefs_file = prefs_dir / f"{user_id}.json"
+    prefs_file.write_text(json.dumps(preferences, indent=2))
+
+
+def update_user_preferences_from_chat(user_id: str, metadata: dict):
+    """Incrementally update user preferences based on chat metadata."""
+    if not user_id:
+        return
+
+    prefs = load_user_preferences(user_id)
+
+    # Update favorite teams
+    if "favorite_teams" not in prefs:
+        prefs["favorite_teams"] = []
+    for team in metadata.get("teams_mentioned", []):
+        if team not in prefs["favorite_teams"]:
+            prefs["favorite_teams"].append(team)
+            # Keep only last 20 teams to avoid bloat
+            if len(prefs["favorite_teams"]) > 20:
+                prefs["favorite_teams"] = prefs["favorite_teams"][-20:]
+
+    # Update preferred bet types
+    if "preferred_bet_types" not in prefs:
+        prefs["preferred_bet_types"] = []
+    for bet_type in metadata.get("bet_types_mentioned", []):
+        if bet_type not in prefs["preferred_bet_types"]:
+            prefs["preferred_bet_types"].append(bet_type)
+
+    # Update sports interests
+    if "sports_interests" not in prefs:
+        prefs["sports_interests"] = []
+    for sport in metadata.get("sports_discussed", []):
+        if sport not in prefs["sports_interests"]:
+            prefs["sports_interests"].append(sport)
+
+    save_user_preferences(user_id, prefs)
+
+
+def build_memory_context(user_id: str, messages: List[dict], sport: str) -> str:
+    """Build comprehensive memory context from user preferences and conversation history."""
+    if not user_id:
+        return ""
+
+    context_parts = []
+
+    # Load user preferences
+    prefs = load_user_preferences(user_id)
+    if prefs.get("favorite_teams"):
+        teams_str = ", ".join(prefs["favorite_teams"][-10:])  # Last 10 teams
+        context_parts.append(f"User's frequently mentioned teams: {teams_str}")
+    if prefs.get("preferred_bet_types"):
+        bets_str = ", ".join(prefs["preferred_bet_types"])
+        context_parts.append(f"User's preferred bet types: {bets_str}")
+
+    # Generate conversation summary for long chats
+    if len(messages) > 15:
+        summary = generate_conversation_summary(messages, max_messages=10)
+        if summary:
+            context_parts.append(f"Previous conversation context: {summary}")
+
+    # Extract current conversation metadata
+    metadata = extract_chat_metadata(messages)
+    if metadata.get("teams_mentioned"):
+        teams_str = ", ".join(metadata["teams_mentioned"][:10])
+        context_parts.append(f"Teams discussed in this chat: {teams_str}")
+
+    return "\n".join(context_parts) if context_parts else ""
+
+
+# ============================================================================
+# END CONTEXTUAL MEMORY FUNCTIONS
+# ============================================================================
 
 
 def handle_chat_message(message: str, sport: str) -> str:
@@ -993,11 +1353,25 @@ def chat():
     if not message and not images:
         return jsonify({"reply": "Send a message or attach an image to get advice."}), 400
 
+    # Get user for memory context
+    user_id = get_user_from_request()
+
     # Use real LLM when OpenAI key is set
     llm_error = None
     if OPENAI_API_KEY:
         sport_label = sport.replace("_", " ").title()
-        context = build_odds_context(message or "Describe this image and answer any question about it.", sport)
+
+        # Build memory context from user preferences and conversation history
+        memory_context = build_memory_context(user_id, history, sport) if user_id else ""
+
+        # Build odds context
+        odds_context = build_odds_context(message or "Describe this image and answer any question about it.", sport)
+
+        # Combine memory and odds context
+        full_context = odds_context
+        if memory_context:
+            full_context = memory_context + "\n\n" + odds_context
+
         conversation = list(history)
         # If images provided, do not append a text-only user message; we'll send multipart
         image_urls = [u for u in images if u][:5]  # max 5 images
@@ -1007,7 +1381,7 @@ def chat():
             reply = call_openai(
                 system,
                 conversation,
-                context=context,
+                context=full_context,
                 current_user_content=current_content,
             )
         else:
@@ -1015,9 +1389,16 @@ def chat():
             reply = call_openai(
                 SYSTEM_PROMPT.format(sport_label=sport_label),
                 conversation,
-                context=context,
+                context=full_context,
             )
         if reply and not reply.startswith("(LLM error:"):
+            # Update user preferences after successful chat
+            if user_id:
+                try:
+                    metadata = extract_chat_metadata(history + [{"sender": "user", "text": message}])
+                    update_user_preferences_from_chat(user_id, metadata)
+                except Exception as e:
+                    print(f"Failed to update user preferences: {e}", flush=True)
             return jsonify({"reply": reply})
         llm_error = reply if reply else "No response from LLM"
     else:
@@ -1033,6 +1414,57 @@ def chat():
             err_preview = (llm_error[:80] + "…") if len(llm_error) > 80 else llm_error
             reply += "\n\n_(LLM failed: " + err_preview + " — check OPENAI_API_KEY on Render.)_"
     return jsonify({"reply": reply})
+
+
+@app.route("/analyze", methods=["POST"])
+def analyze_matchup():
+    """Deep analysis endpoint: team stats, player stats, trending data, matchup history."""
+    user_id = get_user_from_request()
+    if not user_id:
+        return jsonify({"error": "Log in to get analysis"}), 401
+
+    body = request.get_json() or {}
+    analysis_type = body.get("type", "matchup")  # matchup, player, team, fantasy
+    query = body.get("query", "")
+    sport = body.get("sport", "basketball")
+
+    result = {}
+
+    if analysis_type == "matchup":
+        # Analyze specific matchup with odds, spreads, H2H
+        result["odds_analysis"] = build_odds_context(query, sport)
+
+    elif analysis_type == "player":
+        # Analyze specific player
+        player_name = query
+        player_data = fetch_player_stats(player_name)
+        result["player_stats"] = format_player_stats_for_llm(player_data)
+
+    elif analysis_type == "team":
+        # Analyze team with recent form, standings
+        team_name = query
+        team_details = fetch_team_details(team_name, sport)
+        result["team_details"] = team_details
+        if team_details.get("idTeam"):
+            result["recent_form"] = fetch_recent_form(team_details["idTeam"])
+
+    elif analysis_type == "fantasy":
+        # Fantasy basketball analysis
+        result["free_agents"] = fetch_espn_fantasy_basketball()
+        try:
+            from espn_api.basketball import League
+            league = League(
+                league_id=int(ESPN_LEAGUE_ID),
+                year=ESPN_YEAR,
+                espn_s2=ESPN_S2,
+                swid=ESPN_SWID,
+            )
+            fa = league.free_agents(size=50)
+            result["trending"] = analyze_fantasy_trending_players(fa)
+        except Exception as e:
+            result["trending"] = f"Could not fetch trending analysis: {e}"
+
+    return jsonify(result)
 
 
 @app.route("/sports", methods=["GET"])

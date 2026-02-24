@@ -26,7 +26,11 @@ The backend on Render **cannot** use your encrypted key file — it only reads *
 
    **Optional:** The app defaults to `gpt-5.2`. If your project uses different models (e.g. only GPT-4o or GPT-3.5), set **OPENAI_MODEL** on Render to a model you have access to (e.g. `gpt-4o`, `gpt-3.5-turbo`).
 
-   **Optional (recommended for production):** Set **JWT_SECRET** to a long random string so login tokens are secure. If unset, the app uses a default (fine for testing only).
+   **REQUIRED for production:** Set **JWT_SECRET** to a long random string (32+ characters) so login tokens are secure and cannot be forged. Generate one with:
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(32))"
+   ```
+   ⚠️ **Security Warning**: If JWT_SECRET is not set, the app falls back to an insecure default that attackers can use to forge authentication tokens. This is ONLY acceptable for local testing.
 
 4. **Redeploy**  
    After saving, Render will redeploy. Wait for the deploy to finish (1–2 min).
