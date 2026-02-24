@@ -706,6 +706,134 @@ def fetch_espn_past_seasons():
     return "\n\n".join(out)
 
 
+def get_player_detailed_stats(player) -> dict:
+    """Extract all available stats from ESPN player object."""
+    stats = {
+        "name": getattr(player, "name", "Unknown"),
+        "position": getattr(player, "position", "?"),
+        "team": getattr(player, "proTeam", "?"),
+        "avg_points": getattr(player, "avg_points", 0),
+        "total_points": getattr(player, "total_points", 0),
+        "projected_avg": getattr(player, "projected_avg_points", 0),
+        "injury_status": getattr(player, "injuryStatus", None),
+        "games_played": 0,
+    }
+
+    # Try to get stats object with category breakdowns
+    try:
+        player_stats = getattr(player, "stats", {})
+        if player_stats:
+            # Get averaged stats for the season
+            for period in player_stats:
+                period_stats = player_stats[period]
+                if isinstance(period_stats, dict):
+                    stats["games_played"] = period_stats.get("gamesPlayed", 0)
+                    # Category stats if available
+                    if "avg" in period_stats:
+                        avg_stats = period_stats["avg"]
+                        stats.update({
+                            "pts": avg_stats.get("PTS", 0),
+                            "reb": avg_stats.get("REB", 0),
+                            "ast": avg_stats.get("AST", 0),
+                            "stl": avg_stats.get("STL", 0),
+                            "blk": avg_stats.get("BLK", 0),
+                            "to": avg_stats.get("TO", 0),
+                            "fg_pct": avg_stats.get("FG%", 0),
+                            "ft_pct": avg_stats.get("FT%", 0),
+                            "3pm": avg_stats.get("3PTM", 0),
+                        })
+                    break
+    except Exception as e:
+        print(f"Could not extract detailed stats for {stats['name']}: {e}", flush=True)
+
+    return stats
+
+
+def analyze_player_value(player_stats: dict) -> dict:
+    """Analyze a player's fantasy value across multiple dimensions."""
+    analysis = {
+        "overall_value": 0,
+        "consistency_score": 0,
+        "upside_score": 0,
+        "injury_risk": "Low",
+        "recommendation": "",
+    }
+
+    avg_points = player_stats.get("avg_points", 0)
+    proj_avg = player_stats.get("projected_avg", 0)
+    total_points = player_stats.get("total_points", 0)
+    games_played = player_stats.get("games_played", 0)
+    injury = player_stats.get("injury_status")
+
+    # Overall value score (0-100)
+    if avg_points > 40:
+        analysis["overall_value"] = 95
+    elif avg_points > 35:
+        analysis["overall_value"] = 85
+    elif avg_points > 30:
+        analysis["overall_value"] = 75
+    elif avg_points > 25:
+        analysis["overall_value"] = 65
+    elif avg_points > 20:
+        analysis["overall_value"] = 50
+    elif avg_points > 15:
+        analysis["overall_value"] = 35
+    else:
+        analysis["overall_value"] = 20
+
+    # Upside score based on projection vs current
+    if proj_avg and avg_points and avg_points > 0:
+        upside_pct = ((proj_avg - avg_points) / avg_points) * 100
+        if upside_pct > 20:
+            analysis["upside_score"] = 95
+        elif upside_pct > 15:
+            analysis["upside_score"] = 85
+        elif upside_pct > 10:
+            analysis["upside_score"] = 70
+        elif upside_pct > 5:
+            analysis["upside_score"] = 50
+        else:
+            analysis["upside_score"] = 30
+
+    # Consistency score (based on games played and total points)
+    if games_played and games_played > 10:
+        expected_total = avg_points * games_played
+        if total_points and expected_total > 0:
+            consistency_ratio = total_points / expected_total
+            if 0.95 <= consistency_ratio <= 1.05:
+                analysis["consistency_score"] = 90
+            elif 0.90 <= consistency_ratio <= 1.10:
+                analysis["consistency_score"] = 75
+            else:
+                analysis["consistency_score"] = 60
+
+    # Injury risk assessment
+    if injury:
+        if injury.lower() in ["out", "doubtful"]:
+            analysis["injury_risk"] = "High"
+            analysis["overall_value"] = max(0, analysis["overall_value"] - 30)
+        elif injury.lower() in ["questionable", "day to day"]:
+            analysis["injury_risk"] = "Medium"
+            analysis["overall_value"] = max(0, analysis["overall_value"] - 15)
+
+    # Generate recommendation
+    if analysis["overall_value"] >= 80:
+        analysis["recommendation"] = "🔥 MUST ADD - Elite value"
+    elif analysis["overall_value"] >= 65 and analysis["upside_score"] >= 70:
+        analysis["recommendation"] = "⭐ HIGH PRIORITY - Great upside"
+    elif analysis["overall_value"] >= 50:
+        analysis["recommendation"] = "✅ SOLID PICKUP - Good value"
+    elif analysis["upside_score"] >= 80:
+        analysis["recommendation"] = "📈 SPECULATIVE - High upside play"
+    else:
+        analysis["recommendation"] = "⚠️ WATCH LIST - Monitor closely"
+
+    if analysis["injury_risk"] == "High":
+        analysis["recommendation"] += " (injury concern)"
+
+    return analysis
+
+
 def analyze_fantasy_trending_players(free_agents: list) -> str:
     """Analyze which free agents are trending up based on recent performance."""
     if not free_agents:
@@ -752,6 +880,137 @@ def analyze_fantasy_trending_players(free_agents: list) -> str:
     return "\n".join(lines)
 
 
+def comprehensive_fantasy_analysis(free_agents: list, top_n: int = 15) -> str:
+    """
+    Comprehensive fantasy analysis with detailed stats, value assessment, and recommendations.
+    This is the main analytical function that provides methodical player evaluation.
+    """
+    if not free_agents:
+        return "No free agents available for analysis."
+
+    # Analyze all players
+    analyzed_players = []
+    for player in free_agents[:50]:  # Analyze top 50
+        player_stats = get_player_detailed_stats(player)
+        value_analysis = analyze_player_value(player_stats)
+
+        analyzed_players.append({
+            **player_stats,
+            **value_analysis
+        })
+
+    # Sort by overall value score
+    analyzed_players.sort(key=lambda x: (x["overall_value"], x["upside_score"]), reverse=True)
+
+    lines = ["## 📊 COMPREHENSIVE FANTASY BASKETBALL ANALYSIS"]
+    lines.append("")
+    lines.append("**Top Recommended Pickups** (analyzed across value, upside, and consistency):")
+    lines.append("")
+
+    for i, p in enumerate(analyzed_players[:top_n], 1):
+        # Build stats string
+        stats_parts = [f"avg {p['avg_points']:.1f} fpts"]
+        if p.get("pts"):
+            stats_parts.append(f"{p['pts']:.1f} pts")
+        if p.get("reb"):
+            stats_parts.append(f"{p['reb']:.1f} reb")
+        if p.get("ast"):
+            stats_parts.append(f"{p['ast']:.1f} ast")
+        if p.get("3pm"):
+            stats_parts.append(f"{p['3pm']:.1f} 3pm")
+
+        stats_str = ", ".join(stats_parts)
+
+        # Build analysis string
+        analysis_parts = []
+        if p["projected_avg"] and p["avg_points"] and p["avg_points"] > 0:
+            proj_change = ((p["projected_avg"] - p["avg_points"]) / p["avg_points"]) * 100
+            if proj_change > 5:
+                analysis_parts.append(f"+{proj_change:.1f}% projected")
+
+        if p["consistency_score"] > 80:
+            analysis_parts.append("consistent")
+
+        if p["injury_status"]:
+            analysis_parts.append(f"injury: {p['injury_status']}")
+
+        analysis_str = f" ({', '.join(analysis_parts)})" if analysis_parts else ""
+
+        lines.append(
+            f"{i}. **{p['name']}** ({p['position']}) — {p['team']}\n"
+            f"   📈 {p['recommendation']}\n"
+            f"   📊 Stats: {stats_str}{analysis_str}\n"
+            f"   💎 Value Score: {p['overall_value']}/100 | Upside: {p['upside_score']}/100"
+        )
+        lines.append("")
+
+    # Add position breakdown
+    lines.append("**Position Analysis:**")
+    position_groups = {}
+    for p in analyzed_players[:30]:
+        pos = p["position"]
+        if pos not in position_groups:
+            position_groups[pos] = []
+        position_groups[pos].append(p)
+
+    for pos in sorted(position_groups.keys()):
+        players = position_groups[pos]
+        top_player = players[0] if players else None
+        if top_player:
+            lines.append(
+                f"  **{pos}**: Best available - {top_player['name']} "
+                f"({top_player['avg_points']:.1f} fpts, value: {top_player['overall_value']}/100)"
+            )
+
+    return "\n".join(lines)
+
+
+def compare_fantasy_players(player_names: list, all_players: list) -> str:
+    """Compare multiple fantasy players side-by-side."""
+    if not player_names or not all_players:
+        return "Cannot compare players - insufficient data."
+
+    # Find players by name (case-insensitive)
+    found_players = []
+    for name_query in player_names:
+        name_lower = name_query.lower()
+        for player in all_players:
+            player_name = getattr(player, "name", "").lower()
+            if name_lower in player_name or player_name in name_lower:
+                found_players.append(player)
+                break
+
+    if len(found_players) < 2:
+        return f"Could not find enough players to compare. Found: {[getattr(p, 'name', '?') for p in found_players]}"
+
+    lines = ["## 🔄 PLAYER COMPARISON"]
+    lines.append("")
+
+    comparison_data = []
+    for player in found_players:
+        stats = get_player_detailed_stats(player)
+        value = analyze_player_value(stats)
+        comparison_data.append({**stats, **value})
+
+    # Show comparison table
+    for p in comparison_data:
+        lines.append(f"**{p['name']}** ({p['position']}) — {p['team']}")
+        lines.append(f"  Fantasy Points: {p['avg_points']:.1f} avg, {p['total_points']:.0f} total")
+        if p["projected_avg"]:
+            lines.append(f"  Projected: {p['projected_avg']:.1f} fpts")
+        if p.get("pts"):
+            lines.append(f"  Categories: {p['pts']:.1f} pts, {p['reb']:.1f} reb, {p['ast']:.1f} ast")
+        lines.append(f"  Value Score: {p['overall_value']}/100 (upside: {p['upside_score']}/100)")
+        lines.append(f"  {p['recommendation']}")
+        lines.append("")
+
+    # Recommendation
+    best_player = max(comparison_data, key=lambda x: x["overall_value"])
+    lines.append(f"**Recommendation**: **{best_player['name']}** has the highest overall value.")
+
+    return "\n".join(lines)
+
+
 def build_odds_context(message: str, sport: str) -> str:
     """Fetch relevant odds/live data. Always include current-sport matchups so the specialist can answer."""
     msg = message.lower().strip()
@@ -783,11 +1042,23 @@ def build_odds_context(message: str, sport: str) -> str:
         "fantasy draft", "draft advice", "who to draft",
         "trending", "hot", "breakout", "who's hot", "whos hot", "rising",
     )
+
+    # Triggers for comprehensive analysis
+    analysis_fantasy_triggers = (
+        "analyze", "analysis", "breakdown", "stats", "detailed",
+        "comprehensive", "deep dive", "evaluate", "best available",
+        "value", "compare", "comparison", "versus", "vs",
+    )
+
     if sport == "basketball" and any(t in msg for t in fantasy_triggers):
         espn_block = fetch_espn_fantasy_basketball()
         parts.append(espn_block)
 
-        # Add trending player analysis if we have free agents data
+        # Determine if comprehensive analysis is needed
+        needs_comprehensive = any(t in msg for t in analysis_fantasy_triggers) or \
+                              any(t in msg for t in ("who should i pick", "best pickup", "top pickups", "best available"))
+
+        # Add comprehensive or trending analysis if we have free agents data
         if ESPN_LEAGUE_ID and ESPN_YEAR and not espn_block.startswith("("):
             try:
                 from espn_api.basketball import League
@@ -799,10 +1070,16 @@ def build_odds_context(message: str, sport: str) -> str:
                 )
                 fa = league.free_agents(size=50)
                 if fa:
-                    trending_analysis = analyze_fantasy_trending_players(fa)
-                    parts.append(trending_analysis)
+                    if needs_comprehensive:
+                        # Provide full analytical breakdown
+                        comprehensive_analysis = comprehensive_fantasy_analysis(fa, top_n=15)
+                        parts.append(comprehensive_analysis)
+                    else:
+                        # Just show trending players
+                        trending_analysis = analyze_fantasy_trending_players(fa)
+                        parts.append(trending_analysis)
             except Exception as e:
-                print(f"Trending analysis failed: {e}", flush=True)
+                print(f"Fantasy analysis failed: {e}", flush=True)
 
         past_block = fetch_espn_past_seasons()
         if past_block:
@@ -1333,7 +1610,8 @@ SYSTEM_PROMPT = """You are BetAI's **{sport_label} specialist**. You act as a de
 6. When "ESPN Fantasy Basketball" data is provided (free agents with avg pts, total pts, projected avg): use it to answer "who should I pick up", "is [player] a good pickup", "who to add". Recommend 1–3 specific players from the list with a one-line reason; if the user asks about a named player, say whether they appear in the free agents list and whether they look like a good add based on the stats.
 7. When the ESPN block says "(ESPN Fantasy Basketball is not configured" or "(Could not load ESPN Fantasy": tell the user exactly what to do—add ESPN_LEAGUE_ID and ESPN_YEAR in Render → Environment and redeploy; if their league is private, add ESPN_S2 and ESPN_SWID from fantasy.espn.com cookies. Do not say "no available data" without giving the fix.
 8. When "ESPN Fantasy Basketball — [year] season (general stats)" is provided (standings, top scorers): use it to answer "how did my league do", "last year standings", "past season", "who were the top scorers". Reference actual team names and player names from the data.
-9. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate."""
+9. Mention Milano Cortina 2026 only when relevant. Remind users to bet responsibly when appropriate.
+10. **COMPREHENSIVE FANTASY ANALYSIS**: When "## 📊 COMPREHENSIVE FANTASY BASKETBALL ANALYSIS" is provided, you have access to deep analytical data including Value Scores (0-100), Upside Scores, detailed stats (pts/reb/ast/3pm), and specific recommendations (🔥 MUST ADD, ⭐ HIGH PRIORITY, etc.). Reference these metrics directly in your recommendations. For example: "**Player X** has an 85/100 value score with strong upside (75/100) - this is a ⭐ HIGH PRIORITY pickup." Use the position analysis to guide positional needs. Be methodical and data-driven when this analysis is provided."""
 
 
 VISION_SYSTEM_ADDON = (
@@ -1449,8 +1727,7 @@ def analyze_matchup():
             result["recent_form"] = fetch_recent_form(team_details["idTeam"])
 
     elif analysis_type == "fantasy":
-        # Fantasy basketball analysis
-        result["free_agents"] = fetch_espn_fantasy_basketball()
+        # Fantasy basketball comprehensive analysis
         try:
             from espn_api.basketball import League
             league = League(
@@ -1460,9 +1737,16 @@ def analyze_matchup():
                 swid=ESPN_SWID,
             )
             fa = league.free_agents(size=50)
+            result["comprehensive_analysis"] = comprehensive_fantasy_analysis(fa, top_n=20)
             result["trending"] = analyze_fantasy_trending_players(fa)
+
+            # If player names provided in query, do comparison
+            if query and "vs" in query.lower():
+                player_names = [name.strip() for name in query.lower().split("vs")]
+                result["player_comparison"] = compare_fantasy_players(player_names, fa)
         except Exception as e:
-            result["trending"] = f"Could not fetch trending analysis: {e}"
+            result["error"] = f"Could not fetch fantasy analysis: {e}"
+            result["free_agents_fallback"] = fetch_espn_fantasy_basketball()
 
     return jsonify(result)
 
